@@ -85,6 +85,12 @@ export async function saveAccountToCloud(account: AccountWallet) {
   await setDoc(docRef, account, { merge: true });
 }
 
+// Delete an account from Cloud
+export async function deleteAccountFromCloud(id: string) {
+  const docRef = doc(db, 'accounts', id);
+  await deleteDoc(docRef);
+}
+
 // Save all accounts in bulk
 export async function saveAccountsBulkToCloud(accounts: AccountWallet[]) {
   for (const acc of accounts) {

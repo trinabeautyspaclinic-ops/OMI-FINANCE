@@ -28,6 +28,7 @@ import { AlertCenterView } from './components/AlertCenterView';
 import { DividendView } from './components/DividendView';
 import { GoogleSheetsGuideView } from './components/GoogleSheetsGuideView';
 import { CategoryManagerView } from './components/CategoryManagerView';
+import { CashflowAllocationView } from './components/CashflowAllocationView';
 import { TransactionModal } from './components/TransactionModal';
 import { TransferFundModal } from './components/TransferFundModal';
 import { ShareholderModal } from './components/ShareholderModal';
@@ -45,13 +46,14 @@ import {
   deleteTransactionFromCloud,
   saveAccountToCloud,
   saveAccountsBulkToCloud,
+  deleteAccountFromCloud,
   saveDividendToCloud,
   saveSettingsToCloud
 } from './services/cashflowSync';
 
 export default function App() {
   // Navigation State
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'funds' | 'categories' | 'alerts' | 'dividends' | 'sheets_guide'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'funds' | 'allocation' | 'categories' | 'alerts' | 'dividends' | 'sheets_guide'>('dashboard');
 
   // Persistence State
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
@@ -249,6 +251,33 @@ export default function App() {
     }
   };
 
+  const handleSaveAccount = async (account: AccountWallet) => {
+    setAccounts(prev => {
+      const idx = prev.findIndex(a => a.id === account.id);
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = account;
+        return copy;
+      }
+      return [...prev, account];
+    });
+
+    try {
+      await saveAccountToCloud(account);
+    } catch (err) {
+      console.error('Lỗi lưu quỹ lên đám mây:', err);
+    }
+  };
+
+  const handleDeleteAccount = async (accountId: string) => {
+    setAccounts(prev => prev.filter(a => a.id !== accountId));
+    try {
+      await deleteAccountFromCloud(accountId);
+    } catch (err) {
+      console.error('Lỗi xóa quỹ trên đám mây:', err);
+    }
+  };
+
   const handleAddDividendDistribution = async (newDist: DividendDistribution) => {
     setDividendDistributions(prev => [newDist, ...prev]);
 
@@ -375,7 +404,7 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col selection:bg-emerald-500 selection:text-slate-950">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col selection:bg-slate-200 selection:text-slate-900 font-sans antialiased">
       {/* Top Bar Navigation */}
       <Header
         activeTab={activeTab}
@@ -402,17 +431,19 @@ export default function App() {
               customEndDate={customEndDate}
               setCustomEndDate={setCustomEndDate}
               onOpenNewTransaction={handleOpenNewTransaction}
+              onNavigateToFunds={() => setActiveTab('funds')}
+              onNavigateToAllocation={() => setActiveTab('allocation')}
             />
 
             {/* Recent Transactions List */}
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
                   Giao Dịch Dòng Tiền Gần Đây
                 </h3>
                 <button
                   onClick={() => setActiveTab('transactions')}
-                  className="text-xs text-emerald-400 hover:text-emerald-300 font-medium"
+                  className="text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white font-medium"
                 >
                   Xem toàn bộ sổ giao dịch →
                 </button>
@@ -427,6 +458,23 @@ export default function App() {
               />
             </div>
           </div>
+        )}
+
+        {activeTab === 'allocation' && (
+          <CashflowAllocationView
+            transactions={transactions}
+            filteredTransactions={filteredTransactions}
+            accounts={accounts}
+            categories={categories}
+            rates={rates}
+            selectedPeriod={selectedPeriod}
+            setSelectedPeriod={setSelectedPeriod}
+            customStartDate={customStartDate}
+            setCustomStartDate={setCustomStartDate}
+            customEndDate={customEndDate}
+            setCustomEndDate={setCustomEndDate}
+            onOpenNewTransaction={handleOpenNewTransaction}
+          />
         )}
 
         {activeTab === 'transactions' && (
@@ -448,6 +496,8 @@ export default function App() {
             rates={rates}
             onUpdateAccountThreshold={handleUpdateAccountThreshold}
             onUpdateAccountInitialBalance={handleUpdateAccountInitialBalance}
+            onSaveAccount={handleSaveAccount}
+            onDeleteAccount={handleDeleteAccount}
             onOpenTransferModal={() => setIsTransferModalOpen(true)}
             onEditTransaction={handleEditTransaction}
           />

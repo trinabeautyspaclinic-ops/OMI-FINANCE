@@ -96,9 +96,14 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
       setAccessToken(res.accessToken);
     } catch (err: any) {
       console.error(err);
+      let errorMsg = err?.message || 'Vui lòng thử lại';
+      if (err?.code === 'auth/unauthorized-domain' || errorMsg.includes('unauthorized-domain')) {
+        const currentDomain = window.location.hostname;
+        errorMsg = `Tên miền "${currentDomain}" chưa được thêm vào Firebase Authorized Domains. Hãy vào Firebase Console > Authentication > Settings > Authorized domains và thêm chính xác "${currentDomain}" (không có https:// hoặc dấu /). Lưu ý: Bạn vẫn sử dụng đầy đủ toàn bộ chức năng quản lý dòng tiền, số dư và chia cổ tức bình thường!`;
+      }
       setSyncMessage({
         type: 'error',
-        text: `Đăng nhập Google thất bại: ${err?.message || 'Vui lòng thử lại'}`,
+        text: `Đăng nhập Google thất bại: ${errorMsg}`,
       });
     } finally {
       setIsSigningIn(false);
