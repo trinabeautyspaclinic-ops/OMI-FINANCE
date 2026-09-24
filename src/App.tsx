@@ -44,6 +44,7 @@ import {
   saveTransactionToCloud,
   saveTransactionsBulkToCloud,
   deleteTransactionFromCloud,
+  clearAllTransactionsFromCloud,
   saveAccountToCloud,
   saveAccountsBulkToCloud,
   deleteAccountFromCloud,
@@ -115,13 +116,8 @@ export default function App() {
   // 2. Realtime Subscriptions to Cloud Firestore
   useEffect(() => {
     const unsubscribeTx = subscribeToTransactions((cloudTx) => {
-      if (cloudTx.length > 0) {
-        setTransactions(cloudTx);
-        localStorage.setItem('omniflow_transactions_v3', JSON.stringify(cloudTx));
-      } else {
-        // If first time cloud has no transactions, seed initial transactions from USDT sheet
-        saveTransactionsBulkToCloud(INITIAL_TRANSACTIONS).catch(console.warn);
-      }
+      setTransactions(cloudTx);
+      localStorage.setItem('omniflow_transactions_v3', JSON.stringify(cloudTx));
     });
 
     const unsubscribeAccounts = subscribeToAccounts((cloudAccounts) => {
@@ -366,8 +362,22 @@ export default function App() {
     alert(`Đã nạp thành công ${toAdd.length} giao dịch Thu Chi USDT vào sổ cái và đồng bộ Cloud!`);
   };
 
+  const handleClearAllOldTransactions = async () => {
+    if (!window.confirm('Bạn có chắc chắn muốn xóa TOÀN BỘ các giao dịch cũ để bắt đầu sổ cái mới từ quỹ hiện tại không?')) {
+      return;
+    }
+    const oldTx = [...transactions];
+    setTransactions([]);
+    localStorage.setItem('omniflow_transactions_v3', JSON.stringify([]));
+    try {
+      await clearAllTransactionsFromCloud(oldTx);
+    } catch (e) {
+      console.warn('Lỗi dọn dẹp giao dịch cloud:', e);
+    }
+  };
+
   const handleResetData = async () => {
-    if (window.confirm('Đặt lại toàn bộ sổ cái về trạng thái trắng (xóa mọi giao dịch và đặt lại số dư 0)?')) {
+    if (window.confirm('Khởi tạo lại toàn bộ sổ cái với số dư hiện tại (Bank: 140.477.765 đ, Ví USDT: 62.718,22 USDT) và xóa sạch giao dịch cũ?')) {
       localStorage.removeItem('omniflow_transactions_v3');
       localStorage.removeItem('omniflow_accounts_v3');
       localStorage.removeItem('omniflow_categories_v3');
@@ -386,9 +396,7 @@ export default function App() {
 
       // Xóa cloud
       try {
-        for (const tx of transactions) {
-          await deleteTransactionFromCloud(tx.id);
-        }
+        await clearAllTransactionsFromCloud(transactions);
         await saveAccountsBulkToCloud(INITIAL_ACCOUNTS);
       } catch (e) {
         console.warn('Reset cloud note:', e);
@@ -485,6 +493,7 @@ export default function App() {
             onOpenNewTransaction={handleOpenNewTransaction}
             onEditTransaction={handleEditTransaction}
             onDeleteTransaction={handleDeleteTransaction}
+            onClearAllTransactions={handleClearAllOldTransactions}
             onLoadUsdtSheetData={handleImportUsdtSheet}
           />
         )}
@@ -551,11 +560,11 @@ export default function App() {
           <div className="flex items-center gap-3">
             <button
               onClick={handleResetData}
-              className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-200 transition-colors"
-              title="Khôi phục dữ liệu demo ban đầu"
+              className="inline-flex items-center gap-1 text-[11px] text-emerald-400 hover:text-emerald-300 font-medium transition-colors"
+              title="Đặt lại số dư quỹ ban đầu theo số thực tế và dọn dẹp sạch giao dịch"
             >
               <RotateCcw className="w-3 h-3" />
-              <span>Dữ liệu mẫu chuẩn</span>
+              <span>Khởi tạo Quỹ Thực Tế (Bank: 140tr + 62.718 USDT)</span>
             </button>
             <span className="text-slate-800">|</span>
             <span>Cổ đông D & T</span>

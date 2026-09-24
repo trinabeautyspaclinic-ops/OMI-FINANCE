@@ -53,6 +53,15 @@ export async function deleteTransactionFromCloud(id: string) {
   await deleteDoc(docRef);
 }
 
+// Clear all transactions from Cloud
+export async function clearAllTransactionsFromCloud(transactions: Transaction[]) {
+  const promises = transactions.map(tx => {
+    const docRef = doc(db, 'transactions', tx.id);
+    return deleteDoc(docRef);
+  });
+  await Promise.all(promises);
+}
+
 // Sync Accounts in real-time
 export function subscribeToAccounts(
   onData: (accounts: AccountWallet[]) => void,

@@ -22,6 +22,7 @@ interface TransactionsViewProps {
   onOpenNewTransaction: () => void;
   onEditTransaction: (tx: Transaction) => void;
   onDeleteTransaction: (id: string) => void;
+  onClearAllTransactions?: () => void;
   onLoadUsdtSheetData?: () => void;
   highlightTxId?: string;
 }
@@ -33,6 +34,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   onOpenNewTransaction,
   onEditTransaction,
   onDeleteTransaction,
+  onClearAllTransactions,
   onLoadUsdtSheetData,
   highlightTxId,
 }) => {
@@ -130,6 +132,17 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
               title="Nạp tự động 28 giao dịch từ bảng Thu Chi USDT"
             >
               <span>📥 Nạp Sổ Thu Chi USDT</span>
+            </button>
+          )}
+
+          {onClearAllTransactions && transactions.length > 0 && (
+            <button
+              onClick={onClearAllTransactions}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 rounded-lg border border-rose-500/30 transition-colors"
+              title="Xóa toàn bộ các giao dịch cũ để bắt đầu sổ cái mới"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <span>Xóa Hết Giao Dịch Cũ</span>
             </button>
           )}
 

@@ -44,92 +44,43 @@ export const INITIAL_EXCHANGE_RATES: ExchangeRate[] = [
 ];
 
 export const INITIAL_ACCOUNTS: AccountWallet[] = [
-  // 1. Quỹ Tiền Mặt VND
+  // 1. Tài Khoản Ngân Hàng VND (Bank)
+  {
+    id: 'acc_techcom',
+    name: 'Tài Khoản Ngân Hàng (Bank VND)',
+    category: 'bank_vn',
+    currency: 'VND',
+    initialBalance: 140477765, // 140.477.765 đ
+    minBalanceThreshold: 30000000,
+    accountNumber: 'Bank Chính',
+    bankName: 'Ngân Hàng Doanh Nghiệp',
+    color: '#059669',
+    notes: 'Quỹ tiền mặt VND tại Ngân hàng'
+  },
+  // 2. Ví USDT
+  {
+    id: 'acc_binance_usdt',
+    name: 'Ví USDT',
+    category: 'wallet_usdt',
+    currency: 'USDT',
+    initialBalance: 62718.22, // 62.718,22 USDT
+    minBalanceThreshold: 5000,
+    accountNumber: 'Ví TRC20/BEP20 Chính',
+    bankName: 'Ví USDT',
+    color: '#F59E0B',
+    notes: 'Quỹ thanh khoản USDT'
+  },
+  // 3. Quỹ Tiền Mặt VND
   {
     id: 'acc_cash_vnd',
     name: 'Quỹ Tiền Mặt Tại Két',
     category: 'cash_vnd',
     currency: 'VND',
     initialBalance: 0,
-    minBalanceThreshold: 15000000,
+    minBalanceThreshold: 10000000,
     bankName: 'Két sắt trụ sở',
     color: '#D97706',
-    notes: 'Chi tiêu trực tiếp & tạm ứng văn phòng'
-  },
-  // 2. Tài Khoản Ngân Hàng VND
-  {
-    id: 'acc_techcom',
-    name: 'Techcombank Doanh Nghiệp',
-    category: 'bank_vn',
-    currency: 'VND',
-    initialBalance: 0,
-    minBalanceThreshold: 50000000,
-    accountNumber: '19034889988011',
-    bankName: 'Techcombank',
-    color: '#E11D48',
-    notes: 'Tài khoản chính nhận doanh thu & chi trả'
-  },
-  {
-    id: 'acc_vpbank_ads',
-    name: 'VPBank Thẻ Chuyên Ads',
-    category: 'bank_vn',
-    currency: 'VND',
-    initialBalance: 0,
-    minBalanceThreshold: 20000000,
-    accountNumber: '99882233441',
-    bankName: 'VPBank',
-    color: '#059669',
-    notes: 'Thẻ thanh toán Facebook & TikTok Ads'
-  },
-  {
-    id: 'acc_mb_bank',
-    name: 'MB Bank',
-    category: 'bank_vn',
-    currency: 'VND',
-    initialBalance: 0,
-    minBalanceThreshold: 20000000,
-    accountNumber: '088812345678',
-    bankName: 'MB Bank',
-    color: '#4F46E5',
-    notes: 'Tài khoản thanh toán & thu tiền'
-  },
-  // 3. Tài Khoản Ngân Hàng Quốc Tế
-  {
-    id: 'acc_emirates_aed',
-    name: 'Emirates NBD Dubai (AED)',
-    category: 'bank_intl',
-    currency: 'AED',
-    initialBalance: 0,
-    minBalanceThreshold: 5000,
-    accountNumber: 'AE09 0260 0012 3456 7890 12',
-    bankName: 'Emirates NBD',
-    color: '#0D9488',
-    notes: 'Khách hàng Trung Đông (AED)'
-  },
-  {
-    id: 'acc_chase_usd',
-    name: 'Chase Wire Bank (USD)',
-    category: 'bank_intl',
-    currency: 'USD',
-    initialBalance: 0,
-    minBalanceThreshold: 2000,
-    accountNumber: '021000021-987654321',
-    bankName: 'Chase Bank',
-    color: '#0284C7',
-    notes: 'Doanh thu dịch vụ quốc tế (USD)'
-  },
-  // 4. Ví USDT
-  {
-    id: 'acc_binance_usdt',
-    name: 'Ví USDT',
-    category: 'wallet_usdt',
-    currency: 'USDT',
-    initialBalance: 45332, // Tồn đầu kì 1/8 theo sổ Thu Chi USDT
-    minBalanceThreshold: 2000,
-    accountNumber: 'TRC20-Ví chính',
-    bankName: 'Ví USDT TRC20/BEP20',
-    color: '#F59E0B',
-    notes: 'Quỹ thanh khoản USDT'
+    notes: 'Chi tiêu trực tiếp & tạm ứng'
   }
 ];
 
@@ -187,10 +138,8 @@ export const INITIAL_SHAREHOLDERS: Shareholder[] = [
   }
 ];
 
-import { SEED_USDT_TRANSACTIONS } from './seedUsdtData';
-
-// Danh sách giao dịch ban đầu từ sổ Thu Chi USDT thực tế
-export const INITIAL_TRANSACTIONS: Transaction[] = [...SEED_USDT_TRANSACTIONS];
+// Danh sách giao dịch ban đầu rỗng để bắt đầu quản lý mới
+export const INITIAL_TRANSACTIONS: Transaction[] = [];
 
 // Danh sách chia cổ tức rỗng
 export const INITIAL_DIVIDEND_DISTRIBUTIONS: DividendDistribution[] = [];
