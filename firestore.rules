@@ -1,0 +1,21 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Sổ dòng tiền dùng chung cho các thành viên trong doanh nghiệp
+    match /transactions/{transactionId} {
+      allow read, write: if true;
+    }
+    match /accounts/{accountId} {
+      allow read, write: if true;
+    }
+    match /dividends/{dividendId} {
+      allow read, write: if true;
+    }
+    match /settings/{docId} {
+      allow read, write: if true;
+    }
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+  }
+}

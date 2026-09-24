@@ -1,0 +1,77 @@
+{
+  "entities": {
+    "Transaction": {
+      "title": "Transaction",
+      "description": "A financial transaction in OmniFlow",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "type": { "type": "string", "enum": ["inflow", "outflow", "transfer", "dividend_payout"] },
+        "categoryId": { "type": "string" },
+        "categoryName": { "type": "string" },
+        "categoryGroup": { "type": "string" },
+        "accountId": { "type": "string" },
+        "accountName": { "type": "string" },
+        "originalCurrency": { "type": "string" },
+        "originalAmount": { "type": "number" },
+        "exchangeRate": { "type": "number" },
+        "amountVND": { "type": "number" },
+        "description": { "type": "string" },
+        "partnerOrBranch": { "type": "string" },
+        "referenceCode": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "date", "type", "categoryId", "categoryName", "accountId", "originalCurrency", "originalAmount", "amountVND"]
+    },
+    "AccountWallet": {
+      "title": "AccountWallet",
+      "description": "Cash/Bank/Crypto account wallet",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "currency": { "type": "string" },
+        "initialBalance": { "type": "number" },
+        "minBalanceThreshold": { "type": "number" },
+        "accountNumber": { "type": "string" },
+        "bankName": { "type": "string" },
+        "color": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "name", "category", "currency", "initialBalance", "minBalanceThreshold"]
+    },
+    "DividendDistribution": {
+      "title": "DividendDistribution",
+      "description": "Dividend payout record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string" },
+        "periodLabel": { "type": "string" },
+        "date": { "type": "string" },
+        "netCashFlowVND": { "type": "number" },
+        "reservePercentage": { "type": "number" },
+        "reserveAmountVND": { "type": "number" },
+        "distributableProfitVND": { "type": "number" },
+        "allocations": { "type": "array" }
+      },
+      "required": ["id", "code", "date", "netCashFlowVND", "distributableProfitVND", "allocations"]
+    }
+  },
+  "firestore": {
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "All income, expense, and transfer records shared across team members"
+    },
+    "/accounts/{accountId}": {
+      "schema": "AccountWallet",
+      "description": "Wallets and bank accounts with their configured initial balances"
+    },
+    "/dividends/{dividendId}": {
+      "schema": "DividendDistribution",
+      "description": "History of dividend payouts to shareholders"
+    }
+  }
+}
