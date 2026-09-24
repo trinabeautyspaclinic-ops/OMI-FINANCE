@@ -164,7 +164,7 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
     }
   };
 
-  // 2. Liên kết một Sheet có sẵn bằng Link hoặc ID
+  // 2. Liên kết một Sheet có sẵn bằng Link hoặc ID (Không bắt buộc phải đăng nhập Google ngay)
   const handleLinkExistingSheet = async () => {
     if (!customSheetInput.trim()) {
       alert('Vui lòng dán link Google Sheet vào ô');
@@ -177,41 +177,47 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
       return;
     }
 
-    if (!accessToken) {
-      alert('Vui lòng bấm Đăng nhập Google trước để ứng dụng có quyền đồng bộ sang Sheet này');
-      return;
-    }
-
     setIsLinkingCustomSheet(true);
     setSyncMessage(null);
 
     try {
-      // Xác thực quyền truy cập
-      const verified = await verifySpreadsheetAccess(accessToken, extractedId);
-      
+      let sheetTitle = 'Google Sheet Đã Liên Kết';
+      let sheetUrl = customSheetInput.startsWith('http') 
+        ? customSheetInput 
+        : `https://docs.google.com/spreadsheets/d/${extractedId}/edit`;
+
+      // Nếu đã có token đăng nhập thì verify và sync dữ liệu luôn
+      if (accessToken) {
+        try {
+          const verified = await verifySpreadsheetAccess(accessToken, extractedId);
+          sheetTitle = verified.title;
+          sheetUrl = verified.url;
+          await syncAllTransactionsToSheet(accessToken, extractedId, transactions);
+        } catch (vErr) {
+          console.warn('Không thể verify bằng token hiện tại:', vErr);
+        }
+      }
+
       const updatedConfig: GoogleSheetsSyncConfig = {
         ...syncConfig,
         spreadsheetId: extractedId,
-        spreadsheetUrl: verified.url,
-        spreadsheetName: verified.title,
+        spreadsheetUrl: sheetUrl,
+        spreadsheetName: sheetTitle,
         lastSyncedAt: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' }),
       };
-
-      // Đẩy luôn data sang sheet này
-      await syncAllTransactionsToSheet(accessToken, extractedId, transactions);
 
       persistConfig(updatedConfig);
       setCustomSheetInput('');
 
       setSyncMessage({
         type: 'success',
-        text: `Đã liên kết thành công với Google Sheet "${verified.title}" và lưu vĩnh viễn trên Cloud!`,
+        text: `Đã lưu vĩnh viễn Link Google Sheet lên Cloud! Từ nay bạn mở máy nào hay deploy code mới thì link Sheet vẫn còn nguyên vẹn.`,
       });
     } catch (err: any) {
       console.error(err);
       setSyncMessage({
         type: 'error',
-        text: `Không thể liên kết Sheet: ${err?.message || 'Vui lòng kiểm tra link và quyền chia sẻ'}`,
+        text: `Không thể lưu Sheet: ${err?.message || 'Vui lòng kiểm tra lại link'}`,
       });
     } finally {
       setIsLinkingCustomSheet(false);

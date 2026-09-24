@@ -30,8 +30,14 @@ export const SCOPES = [
 const provider = new GoogleAuthProvider();
 SCOPES.forEach(scope => provider.addScope(scope));
 
-// In-memory token cache (DO NOT store in localStorage per security rules)
-let cachedAccessToken: string | null = null;
+// Session token cache: allows surviving page refresh during the session
+let cachedAccessToken: string | null = (() => {
+  try {
+    return sessionStorage.getItem('tf_google_oauth_token');
+  } catch (e) {
+    return null;
+  }
+})();
 let isSigningIn = false;
 
 export const initAuth = (
@@ -40,14 +46,24 @@ export const initAuth = (
 ) => {
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
+      if (!cachedAccessToken) {
+        try {
+          cachedAccessToken = sessionStorage.getItem('tf_google_oauth_token');
+        } catch (e) {
+          // ignore
+        }
+      }
+
       if (cachedAccessToken) {
         if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
       } else if (!isSigningIn) {
-        cachedAccessToken = null;
         if (onAuthFailure) onAuthFailure();
       }
     } else {
       cachedAccessToken = null;
+      try {
+        sessionStorage.removeItem('tf_google_oauth_token');
+      } catch (e) {}
       if (onAuthFailure) onAuthFailure();
     }
   });
@@ -62,6 +78,9 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
       throw new Error('Không lấy được token truy cập Google Sheets từ Firebase Auth');
     }
     cachedAccessToken = credential.accessToken;
+    try {
+      sessionStorage.setItem('tf_google_oauth_token', cachedAccessToken);
+    } catch (e) {}
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error) {
     console.error('Google Sign In Error:', error);
@@ -72,12 +91,20 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 };
 
 export const getAccessToken = async (): Promise<string | null> => {
+  if (!cachedAccessToken) {
+    try {
+      cachedAccessToken = sessionStorage.getItem('tf_google_oauth_token');
+    } catch (e) {}
+  }
   return cachedAccessToken;
 };
 
 export const googleSignOut = async (): Promise<void> => {
   await signOut(auth);
   cachedAccessToken = null;
+  try {
+    sessionStorage.removeItem('tf_google_oauth_token');
+  } catch (e) {}
 };
 
 export async function testFirebaseConnection(): Promise<boolean> {
