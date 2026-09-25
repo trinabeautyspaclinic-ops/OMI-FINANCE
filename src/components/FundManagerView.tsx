@@ -15,7 +15,8 @@ import {
   Smartphone,
   ShieldAlert,
   Sliders,
-  DollarSign
+  DollarSign,
+  RotateCcw
 } from 'lucide-react';
 import { AccountWallet, Currency, ExchangeRate, FundCategory, Transaction } from '../types/cashflow';
 import { calculateAccountBalances, formatMoney } from '../utils/cashflowCalculations';
@@ -30,6 +31,7 @@ interface FundManagerViewProps {
   onDeleteAccount: (accountId: string) => void;
   onOpenTransferModal: () => void;
   onEditTransaction: (tx: Transaction) => void;
+  onResetActualFunds?: () => void;
 }
 
 export const FundManagerView: React.FC<FundManagerViewProps> = ({
@@ -41,7 +43,8 @@ export const FundManagerView: React.FC<FundManagerViewProps> = ({
   onSaveAccount,
   onDeleteAccount,
   onOpenTransferModal,
-  onEditTransaction
+  onEditTransaction,
+  onResetActualFunds
 }) => {
   const [selectedAccountId, setSelectedAccountId] = useState<string>(accounts[0]?.id || '');
   const [filterCategory, setFilterCategory] = useState<FundCategory | 'all'>('all');
@@ -195,7 +198,18 @@ export const FundManagerView: React.FC<FundManagerViewProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5 w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+          {onResetActualFunds && (
+            <button
+              onClick={onResetActualFunds}
+              title="Khởi tạo lại số dư Quỹ thực tế (Bank 140tr & 62.718 USDT) - BẢO TOÀN toàn bộ Hạng mục đã sửa"
+              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-xl transition-colors"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Khởi tạo Quỹ Thực Tế</span>
+            </button>
+          )}
+
           <button
             onClick={onOpenTransferModal}
             className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-3.5 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors border border-slate-200/80 dark:border-slate-700"

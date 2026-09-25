@@ -32,34 +32,69 @@ export function subscribeToTransactions(
   );
 }
 
+// Helper to deep sanitize objects for Firestore (remove undefined fields which crash setDoc)
+export function sanitizeDeep<T>(val: T): T {
+  if (val === undefined) return undefined as any;
+  if (val === null || typeof val !== 'object') return val;
+  if (Array.isArray(val)) {
+    return val
+      .map(item => sanitizeDeep(item))
+      .filter(item => item !== undefined) as any;
+  }
+  const clean: Record<string, any> = {};
+  for (const key of Object.keys(val as any)) {
+    const item = (val as any)[key];
+    if (item !== undefined) {
+      clean[key] = sanitizeDeep(item);
+    }
+  }
+  return clean as any;
+}
+
 // Save or Update a single transaction to Cloud
 export async function saveTransactionToCloud(tx: Transaction) {
-  const docRef = doc(db, 'transactions', tx.id);
-  await setDoc(docRef, tx, { merge: true });
+  try {
+    const docRef = doc(db, 'transactions', tx.id);
+    await setDoc(docRef, sanitizeDeep(tx), { merge: true });
+  } catch (e) {
+    console.warn('[OmniFlow Firebase] saveTransactionToCloud note:', e);
+  }
 }
 
 // Bulk save transactions to Cloud
 export async function saveTransactionsBulkToCloud(transactions: Transaction[]) {
-  const promises = transactions.map(tx => {
-    const docRef = doc(db, 'transactions', tx.id);
-    return setDoc(docRef, tx, { merge: true });
-  });
-  await Promise.all(promises);
+  try {
+    const promises = transactions.map(tx => {
+      const docRef = doc(db, 'transactions', tx.id);
+      return setDoc(docRef, sanitizeDeep(tx), { merge: true });
+    });
+    await Promise.all(promises);
+  } catch (e) {
+    console.warn('[OmniFlow Firebase] saveTransactionsBulkToCloud note:', e);
+  }
 }
 
 // Delete a transaction from Cloud
 export async function deleteTransactionFromCloud(id: string) {
-  const docRef = doc(db, 'transactions', id);
-  await deleteDoc(docRef);
+  try {
+    const docRef = doc(db, 'transactions', id);
+    await deleteDoc(docRef);
+  } catch (e) {
+    console.warn('[OmniFlow Firebase] deleteTransactionFromCloud note:', e);
+  }
 }
 
 // Clear all transactions from Cloud
 export async function clearAllTransactionsFromCloud(transactions: Transaction[]) {
-  const promises = transactions.map(tx => {
-    const docRef = doc(db, 'transactions', tx.id);
-    return deleteDoc(docRef);
-  });
-  await Promise.all(promises);
+  try {
+    const promises = transactions.map(tx => {
+      const docRef = doc(db, 'transactions', tx.id);
+      return deleteDoc(docRef);
+    });
+    await Promise.all(promises);
+  } catch (e) {
+    console.warn('[OmniFlow Firebase] clearAllTransactionsFromCloud note:', e);
+  }
 }
 
 // Sync Accounts in real-time
@@ -90,20 +125,32 @@ export function subscribeToAccounts(
 
 // Save account changes to Cloud
 export async function saveAccountToCloud(account: AccountWallet) {
-  const docRef = doc(db, 'accounts', account.id);
-  await setDoc(docRef, account, { merge: true });
+  try {
+    const docRef = doc(db, 'accounts', account.id);
+    await setDoc(docRef, sanitizeDeep(account), { merge: true });
+  } catch (e) {
+    console.warn('[OmniFlow Firebase] saveAccountToCloud note:', e);
+  }
 }
 
 // Delete an account from Cloud
 export async function deleteAccountFromCloud(id: string) {
-  const docRef = doc(db, 'accounts', id);
-  await deleteDoc(docRef);
+  try {
+    const docRef = doc(db, 'accounts', id);
+    await deleteDoc(docRef);
+  } catch (e) {
+    console.warn('[OmniFlow Firebase] deleteAccountFromCloud note:', e);
+  }
 }
 
 // Save all accounts in bulk
 export async function saveAccountsBulkToCloud(accounts: AccountWallet[]) {
-  for (const acc of accounts) {
-    await saveAccountToCloud(acc);
+  try {
+    for (const acc of accounts) {
+      await saveAccountToCloud(acc);
+    }
+  } catch (e) {
+    console.warn('[OmniFlow Firebase] saveAccountsBulkToCloud note:', e);
   }
 }
 
@@ -132,8 +179,12 @@ export function subscribeToDividends(
 
 // Save a dividend payout to Cloud
 export async function saveDividendToCloud(dividend: DividendDistribution) {
-  const docRef = doc(db, 'dividends', dividend.id);
-  await setDoc(docRef, dividend, { merge: true });
+  try {
+    const docRef = doc(db, 'dividends', dividend.id);
+    await setDoc(docRef, sanitizeDeep(dividend), { merge: true });
+  } catch (e) {
+    console.warn('[OmniFlow Firebase] saveDividendToCloud note:', e);
+  }
 }
 
 // Sync General Settings (Shareholders, Rates, AlertConfig, Categories, Google Sheets Config)
@@ -142,6 +193,7 @@ export function subscribeToSettings(
     shareholders?: Shareholder[];
     rates?: ExchangeRate[];
     categories?: Category[];
+    categoriesUpdatedAt?: number;
     sheetsConfig?: any;
   }) => void
 ) {
@@ -164,8 +216,13 @@ export async function saveSettingsToCloud(data: {
   shareholders?: Shareholder[];
   rates?: ExchangeRate[];
   categories?: Category[];
+  categoriesUpdatedAt?: number;
   sheetsConfig?: any;
 }) {
-  const docRef = doc(db, 'settings', 'general');
-  await setDoc(docRef, data, { merge: true });
+  try {
+    const docRef = doc(db, 'settings', 'general');
+    await setDoc(docRef, sanitizeDeep(data), { merge: true });
+  } catch (e) {
+    console.warn('[OmniFlow Firebase] saveSettingsToCloud note:', e);
+  }
 }

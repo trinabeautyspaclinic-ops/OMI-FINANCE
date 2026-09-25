@@ -63,13 +63,29 @@ export default function App() {
   });
 
   const [accounts, setAccounts] = useState<AccountWallet[]>(() => {
-    const saved = localStorage.getItem('omniflow_accounts_v3');
-    return saved ? JSON.parse(saved) : INITIAL_ACCOUNTS;
+    try {
+      const saved = localStorage.getItem('omniflow_accounts_v3');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.warn('Error reading accounts from localStorage', e);
+    }
+    return INITIAL_ACCOUNTS;
   });
 
   const [categories, setCategories] = useState<Category[]>(() => {
-    const saved = localStorage.getItem('omniflow_categories_v3');
-    return saved ? JSON.parse(saved) : INITIAL_CATEGORIES;
+    try {
+      const saved = localStorage.getItem('omniflow_categories_v3');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.warn('Error reading categories from localStorage', e);
+    }
+    return INITIAL_CATEGORIES;
   });
 
   const [rates, setRates] = useState<ExchangeRate[]>(() => {
@@ -113,26 +129,76 @@ export default function App() {
     testFirebaseConnection();
   }, []);
 
-  // 2. Realtime Subscriptions to Cloud Firestore
+  // Helper to read deleted account IDs
+  const getDeletedAccountIds = (): Set<string> => {
+    try {
+      const saved = localStorage.getItem('omniflow_deleted_accounts');
+      return new Set(saved ? JSON.parse(saved) : []);
+    } catch (e) {
+      return new Set();
+    }
+  };
+
+  // 2. Realtime Subscriptions to Cloud Firestore with smart merging and local protection
   useEffect(() => {
     const unsubscribeTx = subscribeToTransactions((cloudTx) => {
-      setTransactions(cloudTx);
-      localStorage.setItem('omniflow_transactions_v3', JSON.stringify(cloudTx));
+      if (cloudTx && cloudTx.length > 0) {
+        setTransactions(cloudTx);
+        localStorage.setItem('omniflow_transactions_v3', JSON.stringify(cloudTx));
+      }
     });
 
     const unsubscribeAccounts = subscribeToAccounts((cloudAccounts) => {
-      if (cloudAccounts.length > 0) {
-        setAccounts(cloudAccounts);
-        localStorage.setItem('omniflow_accounts_v3', JSON.stringify(cloudAccounts));
+      // Get current local accounts
+      let localAccounts: AccountWallet[] = [];
+      try {
+        const saved = localStorage.getItem('omniflow_accounts_v3');
+        if (saved) localAccounts = JSON.parse(saved);
+      } catch (e) {}
+
+      const deletedIds = getDeletedAccountIds();
+
+      if (cloudAccounts && cloudAccounts.length > 0) {
+        // Filter out deleted accounts from cloud
+        const activeCloudAccounts = cloudAccounts.filter(a => !deletedIds.has(a.id));
+        const cloudIdMap = new Map(activeCloudAccounts.map(a => [a.id, a]));
+
+        // Merge: keep cloud accounts, and KEEP any local accounts that are not in cloud yet
+        const merged: AccountWallet[] = [...activeCloudAccounts];
+        const missingFromCloud: AccountWallet[] = [];
+
+        for (const localAcc of localAccounts) {
+          if (!deletedIds.has(localAcc.id) && !cloudIdMap.has(localAcc.id)) {
+            merged.push(localAcc);
+            missingFromCloud.push(localAcc);
+          }
+        }
+
+        // Push local accounts missing from cloud
+        if (missingFromCloud.length > 0) {
+          saveAccountsBulkToCloud(missingFromCloud).catch(console.warn);
+        }
+
+        setAccounts(merged);
+        localStorage.setItem('omniflow_accounts_v3', JSON.stringify(merged));
       } else {
-        // If first time cloud is empty, seed initial accounts
-        saveAccountsBulkToCloud(INITIAL_ACCOUNTS).catch(console.warn);
+        // If cloud snapshot is empty or offline, preserve local accounts!
+        if (localAccounts.length > 0) {
+          setAccounts(localAccounts);
+          saveAccountsBulkToCloud(localAccounts).catch(console.warn);
+        } else {
+          setAccounts(INITIAL_ACCOUNTS);
+          localStorage.setItem('omniflow_accounts_v3', JSON.stringify(INITIAL_ACCOUNTS));
+          saveAccountsBulkToCloud(INITIAL_ACCOUNTS).catch(console.warn);
+        }
       }
     });
 
     const unsubscribeDividends = subscribeToDividends((cloudDividends) => {
-      setDividendDistributions(cloudDividends);
-      localStorage.setItem('omniflow_dividends_v3', JSON.stringify(cloudDividends));
+      if (cloudDividends && cloudDividends.length > 0) {
+        setDividendDistributions(cloudDividends);
+        localStorage.setItem('omniflow_dividends_v3', JSON.stringify(cloudDividends));
+      }
     });
 
     const unsubscribeSettings = subscribeToSettings((cloudSettings) => {
@@ -142,13 +208,44 @@ export default function App() {
       if (cloudSettings.rates && cloudSettings.rates.length > 0) {
         setRates(cloudSettings.rates);
       }
-      if (cloudSettings.categories && cloudSettings.categories.length > 0) {
-        setCategories(cloudSettings.categories);
-        localStorage.setItem('omniflow_categories_v3', JSON.stringify(cloudSettings.categories));
+
+      // Handle categories safely: NEVER overwrite user-edited local categories with stale/default cloud data!
+      let localCategories: Category[] = [];
+      let localUpdatedAt = 0;
+      try {
+        const saved = localStorage.getItem('omniflow_categories_v3');
+        if (saved) localCategories = JSON.parse(saved);
+        const savedTs = localStorage.getItem('omniflow_categories_updated_at');
+        if (savedTs) localUpdatedAt = parseInt(savedTs, 10) || 0;
+      } catch (e) {}
+
+      const cloudCategories = cloudSettings.categories;
+      const cloudUpdatedAt = cloudSettings.categoriesUpdatedAt || 0;
+
+      if (cloudCategories && cloudCategories.length > 0) {
+        // If local has no categories yet, or cloud has a strictly newer timestamp:
+        if (localCategories.length === 0 || (cloudUpdatedAt > localUpdatedAt && cloudUpdatedAt > 0)) {
+          setCategories(cloudCategories);
+          localStorage.setItem('omniflow_categories_v3', JSON.stringify(cloudCategories));
+          if (cloudUpdatedAt) {
+            localStorage.setItem('omniflow_categories_updated_at', cloudUpdatedAt.toString());
+          }
+        } else if (localUpdatedAt > cloudUpdatedAt) {
+          // Local is newer than cloud: sync local up to cloud
+          saveSettingsToCloud({
+            categories: localCategories,
+            categoriesUpdatedAt: localUpdatedAt
+          }).catch(console.warn);
+        }
       } else {
-        // If first time cloud categories is empty, persist current INITIAL_CATEGORIES to Cloud
-        saveSettingsToCloud({ categories: INITIAL_CATEGORIES }).catch(console.warn);
+        // Cloud categories is empty/undefined: upload local categories to cloud, DO NOT OVERWRITE LOCAL!
+        const catsToSave = localCategories.length > 0 ? localCategories : INITIAL_CATEGORIES;
+        saveSettingsToCloud({
+          categories: catsToSave,
+          categoriesUpdatedAt: localUpdatedAt || Date.now()
+        }).catch(console.warn);
       }
+
       if (cloudSettings.sheetsConfig) {
         setCloudSheetsConfig(cloudSettings.sheetsConfig);
         saveLocalSheetsConfig(cloudSettings.sheetsConfig);
@@ -224,6 +321,7 @@ export default function App() {
   const handleUpdateAccountThreshold = async (accountId: string, newThreshold: number) => {
     const updated = accounts.map(a => (a.id === accountId ? { ...a, minBalanceThreshold: newThreshold } : a));
     setAccounts(updated);
+    localStorage.setItem('omniflow_accounts_v3', JSON.stringify(updated));
     const targetAcc = updated.find(a => a.id === accountId);
     if (targetAcc) {
       try {
@@ -237,6 +335,7 @@ export default function App() {
   const handleUpdateAccountInitialBalance = async (accountId: string, newInitialBalance: number) => {
     const updated = accounts.map(a => (a.id === accountId ? { ...a, initialBalance: newInitialBalance } : a));
     setAccounts(updated);
+    localStorage.setItem('omniflow_accounts_v3', JSON.stringify(updated));
     const targetAcc = updated.find(a => a.id === accountId);
     if (targetAcc) {
       try {
@@ -248,15 +347,25 @@ export default function App() {
   };
 
   const handleSaveAccount = async (account: AccountWallet) => {
+    let updatedAccounts: AccountWallet[] = [];
     setAccounts(prev => {
       const idx = prev.findIndex(a => a.id === account.id);
       if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = account;
-        return copy;
+        updatedAccounts = [...prev];
+        updatedAccounts[idx] = account;
+      } else {
+        updatedAccounts = [...prev, account];
       }
-      return [...prev, account];
+      localStorage.setItem('omniflow_accounts_v3', JSON.stringify(updatedAccounts));
+      return updatedAccounts;
     });
+
+    // Xóa khỏi danh sách đã xóa nếu tạo lại cùng ID
+    try {
+      const deleted = JSON.parse(localStorage.getItem('omniflow_deleted_accounts') || '[]');
+      const filtered = deleted.filter((id: string) => id !== account.id);
+      localStorage.setItem('omniflow_deleted_accounts', JSON.stringify(filtered));
+    } catch (e) {}
 
     try {
       await saveAccountToCloud(account);
@@ -266,7 +375,21 @@ export default function App() {
   };
 
   const handleDeleteAccount = async (accountId: string) => {
-    setAccounts(prev => prev.filter(a => a.id !== accountId));
+    setAccounts(prev => {
+      const updated = prev.filter(a => a.id !== accountId);
+      localStorage.setItem('omniflow_accounts_v3', JSON.stringify(updated));
+      return updated;
+    });
+
+    // Đánh dấu ID đã xóa để listener không kéo lại từ cache cũ
+    try {
+      const deleted = JSON.parse(localStorage.getItem('omniflow_deleted_accounts') || '[]');
+      if (!deleted.includes(accountId)) {
+        deleted.push(accountId);
+        localStorage.setItem('omniflow_deleted_accounts', JSON.stringify(deleted));
+      }
+    } catch (e) {}
+
     try {
       await deleteAccountFromCloud(accountId);
     } catch (err) {
@@ -318,10 +441,15 @@ export default function App() {
   };
 
   const handleUpdateCategories = async (newCategories: Category[]) => {
+    const timestamp = Date.now();
     setCategories(newCategories);
     localStorage.setItem('omniflow_categories_v3', JSON.stringify(newCategories));
+    localStorage.setItem('omniflow_categories_updated_at', timestamp.toString());
     try {
-      await saveSettingsToCloud({ categories: newCategories });
+      await saveSettingsToCloud({ 
+        categories: newCategories,
+        categoriesUpdatedAt: timestamp
+      });
     } catch (err) {
       console.error('Lỗi lưu hạng mục lên đám mây:', err);
     }
@@ -376,32 +504,61 @@ export default function App() {
     }
   };
 
+  // Khởi tạo Quỹ Thực Tế: Bank 140.477.765 đ, USDT 62.718,22 USDT
+  // TUYỆT ĐỐI BẢO TOÀN DANH MỤC HẠNG MỤC THU/CHI ĐÃ SỬA CỦA NGƯỜI DÙNG!
   const handleResetData = async () => {
-    if (window.confirm('Khởi tạo lại toàn bộ sổ cái với số dư hiện tại (Bank: 140.477.765 đ, Ví USDT: 62.718,22 USDT) và xóa sạch giao dịch cũ?')) {
-      localStorage.removeItem('omniflow_transactions_v3');
-      localStorage.removeItem('omniflow_accounts_v3');
-      localStorage.removeItem('omniflow_categories_v3');
-      localStorage.removeItem('omniflow_rates_v3');
-      localStorage.removeItem('omniflow_shareholders_v3');
-      localStorage.removeItem('omniflow_dividends_v3');
-      localStorage.removeItem('omniflow_alert_config');
+    const confirmMessage = 
+      'Khởi tạo lại số dư Quỹ thực tế ban đầu:\n' +
+      '• Tài khoản Ngân hàng (Bank VND): 140.477.765 đ\n' +
+      '• Ví USDT: 62.718,22 USDT\n' +
+      '• Quỹ Tiền Mặt Tại Két: 0 đ\n' +
+      '• Các giao dịch cũ sẽ được dọn sạch để bắt đầu từ số dư quỹ này.\n\n' +
+      '★ BẢO ĐẢM: Toàn bộ danh mục Hạng mục thu/chi bạn đã sửa, danh sách cổ đông và tỷ giá sẽ được GIỮ NGUYÊN VẸN 100%.';
 
-      setTransactions(INITIAL_TRANSACTIONS);
-      setAccounts(INITIAL_ACCOUNTS);
-      setCategories(INITIAL_CATEGORIES);
-      setRates(INITIAL_EXCHANGE_RATES);
-      setShareholders(INITIAL_SHAREHOLDERS);
-      setDividendDistributions(INITIAL_DIVIDEND_DISTRIBUTIONS);
-      setAlertConfig(DEFAULT_ALERT_CONFIG);
-
-      // Xóa cloud
-      try {
-        await clearAllTransactionsFromCloud(transactions);
-        await saveAccountsBulkToCloud(INITIAL_ACCOUNTS);
-      } catch (e) {
-        console.warn('Reset cloud note:', e);
-      }
+    if (!window.confirm(confirmMessage)) {
+      return;
     }
+
+    // 1. Dọn dẹp giao dịch cũ để bắt đầu sổ cái mới từ mốc số dư thực tế
+    const oldTx = [...transactions];
+    setTransactions([]);
+    localStorage.setItem('omniflow_transactions_v3', JSON.stringify([]));
+    try {
+      await clearAllTransactionsFromCloud(oldTx);
+    } catch (e) {
+      console.warn('Clear cloud tx note:', e);
+    }
+
+    // 2. Cập nhật số dư quỹ thực tế cho các tài khoản, giữ nguyên bất kỳ quỹ nào người dùng đã tạo thêm!
+    const targetBankVnd = 140477765;
+    const targetUsdt = 62718.22;
+
+    const updatedAccounts = accounts.map(acc => {
+      if (acc.id === 'acc_techcom' || (acc.currency === 'VND' && acc.category === 'bank_vn')) {
+        return { ...acc, initialBalance: targetBankVnd };
+      }
+      if (acc.id === 'acc_binance_usdt' || (acc.currency === 'USDT' && acc.category === 'wallet_usdt')) {
+        return { ...acc, initialBalance: targetUsdt };
+      }
+      if (acc.id === 'acc_cash_vnd') {
+        return { ...acc, initialBalance: 0 };
+      }
+      return acc;
+    });
+
+    const hasBank = updatedAccounts.some(a => a.id === 'acc_techcom' || (a.currency === 'VND' && a.category === 'bank_vn'));
+    const hasUsdt = updatedAccounts.some(a => a.id === 'acc_binance_usdt' || (a.currency === 'USDT' && a.category === 'wallet_usdt'));
+
+    let finalAccounts = [...updatedAccounts];
+    if (!hasBank) finalAccounts.push(INITIAL_ACCOUNTS[0]);
+    if (!hasUsdt) finalAccounts.push(INITIAL_ACCOUNTS[1]);
+
+    setAccounts(finalAccounts);
+    localStorage.setItem('omniflow_accounts_v3', JSON.stringify(finalAccounts));
+    saveAccountsBulkToCloud(finalAccounts).catch(console.warn);
+
+    // 3. HẠNG MỤC THU CHI HOÀN TOÀN ĐƯỢC GIỮ NGUYÊN!
+    alert('Đã khởi tạo số dư Quỹ thực tế thành công!\n• Bank VND: 140.477.765 đ\n• Ví USDT: 62.718,22 USDT\nToàn bộ Hạng mục Thu Chi của bạn đã được giữ nguyên vẹn.');
   };
 
   const filteredTransactions = filterTransactionsByPeriod(
@@ -509,6 +666,7 @@ export default function App() {
             onDeleteAccount={handleDeleteAccount}
             onOpenTransferModal={() => setIsTransferModalOpen(true)}
             onEditTransaction={handleEditTransaction}
+            onResetActualFunds={handleResetData}
           />
         )}
 

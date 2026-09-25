@@ -30,10 +30,12 @@ export const SCOPES = [
 const provider = new GoogleAuthProvider();
 SCOPES.forEach(scope => provider.addScope(scope));
 
-// Session token cache: allows surviving page refresh during the session
+// Persistent OAuth Token Cache: Stored in localStorage so it NEVER resets on F5 or page refresh
+const TOKEN_STORAGE_KEY = 'tf_google_oauth_token_permanent';
+
 let cachedAccessToken: string | null = (() => {
   try {
-    return sessionStorage.getItem('tf_google_oauth_token');
+    return localStorage.getItem(TOKEN_STORAGE_KEY) || sessionStorage.getItem('tf_google_oauth_token');
   } catch (e) {
     return null;
   }
@@ -41,30 +43,33 @@ let cachedAccessToken: string | null = (() => {
 let isSigningIn = false;
 
 export const initAuth = (
-  onAuthSuccess?: (user: User, token: string) => void,
+  onAuthSuccess?: (user: User, token: string | null) => void,
   onAuthFailure?: () => void
 ) => {
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
       if (!cachedAccessToken) {
         try {
-          cachedAccessToken = sessionStorage.getItem('tf_google_oauth_token');
+          cachedAccessToken = localStorage.getItem(TOKEN_STORAGE_KEY) || sessionStorage.getItem('tf_google_oauth_token');
         } catch (e) {
           // ignore
         }
       }
 
-      if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
-      } else if (!isSigningIn) {
-        if (onAuthFailure) onAuthFailure();
+      // Always notify auth success with user even if token needs silent refresh
+      if (onAuthSuccess) {
+        onAuthSuccess(user, cachedAccessToken);
       }
     } else {
-      cachedAccessToken = null;
-      try {
-        sessionStorage.removeItem('tf_google_oauth_token');
-      } catch (e) {}
-      if (onAuthFailure) onAuthFailure();
+      // User explicitly signed out
+      if (!isSigningIn) {
+        cachedAccessToken = null;
+        try {
+          localStorage.removeItem(TOKEN_STORAGE_KEY);
+          sessionStorage.removeItem('tf_google_oauth_token');
+        } catch (e) {}
+        if (onAuthFailure) onAuthFailure();
+      }
     }
   });
 };
@@ -79,6 +84,7 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     }
     cachedAccessToken = credential.accessToken;
     try {
+      localStorage.setItem(TOKEN_STORAGE_KEY, cachedAccessToken);
       sessionStorage.setItem('tf_google_oauth_token', cachedAccessToken);
     } catch (e) {}
     return { user: result.user, accessToken: cachedAccessToken };
@@ -93,7 +99,7 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 export const getAccessToken = async (): Promise<string | null> => {
   if (!cachedAccessToken) {
     try {
-      cachedAccessToken = sessionStorage.getItem('tf_google_oauth_token');
+      cachedAccessToken = localStorage.getItem(TOKEN_STORAGE_KEY) || sessionStorage.getItem('tf_google_oauth_token');
     } catch (e) {}
   }
   return cachedAccessToken;
@@ -103,6 +109,7 @@ export const googleSignOut = async (): Promise<void> => {
   await signOut(auth);
   cachedAccessToken = null;
   try {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
     sessionStorage.removeItem('tf_google_oauth_token');
   } catch (e) {}
 };
