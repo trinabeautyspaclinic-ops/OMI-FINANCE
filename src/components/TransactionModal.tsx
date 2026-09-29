@@ -65,12 +65,31 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   // Pre-fill when editing or creating
   useEffect(() => {
     if (editingTransaction) {
-      setType(editingTransaction.type === 'inflow' ? 'inflow' : 'outflow');
+      const txType = editingTransaction.type === 'inflow' ? 'inflow' : 'outflow';
+      setType(txType);
       setDate(editingTransaction.date);
       setAccountId(editingTransaction.accountId);
-      setCategoryId(editingTransaction.categoryId);
-      setCustomCategoryName(editingTransaction.categoryName);
-      setIsCustomCategory(false);
+
+      // Tìm hạng mục khớp với type của giao dịch
+      const validCategoriesForType = categories.filter(c => c.type === txType);
+      const catByIdAndType = validCategoriesForType.find(c => c.id === editingTransaction.categoryId);
+      const catByNameAndType = validCategoriesForType.find(c => c.name.toLowerCase() === (editingTransaction.categoryName || '').toLowerCase());
+
+      if (catByIdAndType) {
+        setCategoryId(catByIdAndType.id);
+        setCustomCategoryName(catByIdAndType.name);
+        setIsCustomCategory(false);
+      } else if (catByNameAndType) {
+        setCategoryId(catByNameAndType.id);
+        setCustomCategoryName(catByNameAndType.name);
+        setIsCustomCategory(false);
+      } else if (validCategoriesForType.length > 0) {
+        // Tự động đồng bộ đúng hạng mục đầu tiên của loại thu/chi
+        setCategoryId(validCategoriesForType[0].id);
+        setCustomCategoryName(validCategoriesForType[0].name);
+        setIsCustomCategory(false);
+      }
+
       setOriginalCurrency(editingTransaction.originalCurrency);
       setOriginalAmount(editingTransaction.originalAmount);
       setCustomRate(editingTransaction.exchangeRate);
@@ -98,6 +117,17 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       setDescription('');
     }
   }, [editingTransaction, isOpen, accounts, categories, rates]);
+
+  // Chuyển đổi loại Thu / Chi và tự động đồng bộ danh mục hợp lệ
+  const handleTypeChange = (newType: 'inflow' | 'outflow') => {
+    setType(newType);
+    const validCats = categories.filter(c => c.type === newType);
+    const currentCatValid = validCats.find(c => c.id === categoryId);
+    if (!currentCatValid && validCats.length > 0) {
+      setCategoryId(validCats[0].id);
+      setCustomCategoryName(validCats[0].name);
+    }
+  };
 
   // When changing account, update default currency & rate if not editing
   const handleAccountChange = (newAccId: string) => {
@@ -137,17 +167,17 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     const selectedAcc = accounts.find(a => a.id === accountId);
     const selectedCat = categories.find(c => c.id === categoryId);
 
-    const finalCategoryName = (customCategoryName && customCategoryName.trim()) 
-      ? customCategoryName.trim() 
-      : (selectedCat ? selectedCat.name : 'Khác');
+    const finalCategoryName = isCustomCategory
+      ? (customCategoryName && customCategoryName.trim() ? customCategoryName.trim() : (selectedCat ? selectedCat.name : 'Khác'))
+      : (selectedCat ? selectedCat.name : (customCategoryName || 'Khác'));
 
     const savedTx: Transaction = {
       id: editingTransaction ? editingTransaction.id : `TX-${Date.now().toString().slice(-6)}`,
       date,
       type,
-      categoryId: categoryId || 'cat_custom',
+      categoryId: selectedCat ? selectedCat.id : (categoryId || 'cat_custom'),
       categoryName: finalCategoryName,
-      categoryGroup: selectedCat ? selectedCat.group : 'other',
+      categoryGroup: selectedCat ? selectedCat.group : (type === 'inflow' ? 'revenue' : 'operating_cost'),
       accountId,
       accountName: selectedAcc ? selectedAcc.name : 'Quỹ tài khoản',
       originalCurrency,
@@ -217,7 +247,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
         <div className="grid grid-cols-2 gap-2 p-1 bg-slate-950 rounded-lg border border-slate-800 mb-3.5">
           <button
             type="button"
-            onClick={() => setType('inflow')}
+            onClick={() => handleTypeChange('inflow')}
             className={`py-1.5 text-xs font-bold rounded transition-all ${
               type === 'inflow'
                 ? 'bg-emerald-500 text-slate-950 shadow-sm'
@@ -228,7 +258,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => setType('outflow')}
+            onClick={() => handleTypeChange('outflow')}
             className={`py-1.5 text-xs font-bold rounded transition-all ${
               type === 'outflow'
                 ? 'bg-rose-500 text-white shadow-sm'

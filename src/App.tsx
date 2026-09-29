@@ -66,6 +66,42 @@ import {
   saveSettingsToCloud
 } from './services/cashflowSync';
 
+// Chuẩn hóa danh mục giao dịch, tự động sửa lỗi các giao dịch thu tiền nhưng mang nhầm danh mục chi (như Ads)
+const sanitizeTransactions = (txs: Transaction[]): Transaction[] => {
+  return txs.map(t => {
+    // Sửa lỗi danh mục cho giao dịch TX-706876 (Doanh thu Cơ sở 1)
+    if (t.id === 'TX-706876' && (t.categoryId === 'cat_ads_fb_cold' || t.categoryGroup === 'marketing_ads' || t.categoryName.includes('Ads'))) {
+      return {
+        ...t,
+        type: 'inflow',
+        categoryId: 'cat_rev_cs1',
+        categoryName: 'Doanh thu Cơ sở 1',
+        categoryGroup: 'revenue'
+      };
+    }
+    // Sửa lỗi danh mục cho giao dịch TX-242974 (Nhận Thanh Toán Bằng USDT)
+    if (t.id === 'TX-242974' && (t.categoryId === 'cat_ads_fb_cold' || t.categoryGroup === 'marketing_ads' || t.categoryName.includes('Ads'))) {
+      return {
+        ...t,
+        type: 'inflow',
+        categoryId: 'cat_rev_usdt_in',
+        categoryName: 'Nhận Thanh Toán Bằng USDT',
+        categoryGroup: 'revenue'
+      };
+    }
+    // Sửa chung nếu giao dịch là Inflow nhưng lại mang nhóm marketing_ads do lỗi chọn trước đó
+    if (t.type === 'inflow' && (t.categoryGroup === 'marketing_ads' || t.categoryId === 'cat_ads_fb_cold')) {
+      return {
+        ...t,
+        categoryId: 'cat_rev_cs1',
+        categoryName: 'Doanh thu Cơ sở 1',
+        categoryGroup: 'revenue'
+      };
+    }
+    return t;
+  });
+};
+
 export default function App() {
   // Navigation State
   const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'funds' | 'allocation' | 'categories' | 'alerts' | 'dividends' | 'sheets_guide' | 'sync_logs'>('dashboard');
@@ -80,19 +116,18 @@ export default function App() {
           // Bảo vệ các giao dịch ngày 28/09: Luôn đảm bảo có mặt trong sổ
           const idSet = new Set(parsed.map((t: any) => t.id));
           const missing = INITIAL_TRANSACTIONS.filter(t => !idSet.has(t.id));
-          if (missing.length > 0) {
-            const merged = [...parsed, ...missing];
-            localStorage.setItem('omniflow_transactions_v3', JSON.stringify(merged));
-            return merged;
-          }
-          return parsed;
+          const baseList = missing.length > 0 ? [...parsed, ...missing] : parsed;
+          const sanitized = sanitizeTransactions(baseList);
+          localStorage.setItem('omniflow_transactions_v3', JSON.stringify(sanitized));
+          return sanitized;
         }
       }
     } catch (e) {
       console.warn('Lỗi đọc giao dịch từ localStorage:', e);
     }
-    localStorage.setItem('omniflow_transactions_v3', JSON.stringify(INITIAL_TRANSACTIONS));
-    return INITIAL_TRANSACTIONS;
+    const initSanitized = sanitizeTransactions(INITIAL_TRANSACTIONS);
+    localStorage.setItem('omniflow_transactions_v3', JSON.stringify(initSanitized));
+    return initSanitized;
   });
 
   const [accounts, setAccounts] = useState<AccountWallet[]>(() => {
@@ -191,8 +226,9 @@ export default function App() {
           finalTxs = [...cloudTx, ...missingInitial];
           saveTransactionsBulkToCloud(missingInitial).catch(console.warn);
         }
-        setTransactions(finalTxs);
-        localStorage.setItem('omniflow_transactions_v3', JSON.stringify(finalTxs));
+        const sanitized = sanitizeTransactions(finalTxs);
+        setTransactions(sanitized);
+        localStorage.setItem('omniflow_transactions_v3', JSON.stringify(sanitized));
       } else {
         // Nếu cloud chưa có giao dịch, lưu INITIAL_TRANSACTIONS (gồm 28/09) lên cloud
         saveTransactionsBulkToCloud(INITIAL_TRANSACTIONS).catch(console.warn);
