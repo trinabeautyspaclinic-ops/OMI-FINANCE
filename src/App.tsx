@@ -66,27 +66,48 @@ import {
   saveSettingsToCloud
 } from './services/cashflowSync';
 
-// Chuẩn hóa danh mục giao dịch, tự động sửa lỗi các giao dịch thu tiền nhưng mang nhầm danh mục chi (như Ads)
+// Chuẩn hóa danh mục và tài khoản giao dịch, tự động sửa lỗi các giao dịch thu tiền nhưng mang nhầm danh mục chi hoặc nhầm ví
 const sanitizeTransactions = (txs: Transaction[]): Transaction[] => {
   return txs.map(t => {
-    // Sửa lỗi danh mục cho giao dịch TX-706876 (Doanh thu Cơ sở 1)
-    if (t.id === 'TX-706876' && (t.categoryId === 'cat_ads_fb_cold' || t.categoryGroup === 'marketing_ads' || t.categoryName.includes('Ads'))) {
+    // Sửa lỗi cho giao dịch TX-706876 (Tiền bán 8000 USDT về VND phải vào Tài Khoản Ngân Hàng)
+    if (t.id === 'TX-706876') {
       return {
         ...t,
         type: 'inflow',
+        accountId: 'acc_techcom',
+        accountName: 'Tài Khoản Ngân Hàng (Bank VND)',
         categoryId: 'cat_rev_cs1',
         categoryName: 'Doanh thu Cơ sở 1',
         categoryGroup: 'revenue'
       };
     }
+    // Sửa lỗi cho giao dịch TX-567013 (Cọc may đồng phục bằng VND chi từ Tài Khoản Ngân Hàng)
+    if (t.id === 'TX-567013') {
+      return {
+        ...t,
+        type: 'outflow',
+        accountId: 'acc_techcom',
+        accountName: 'Tài Khoản Ngân Hàng (Bank VND)'
+      };
+    }
     // Sửa lỗi danh mục cho giao dịch TX-242974 (Nhận Thanh Toán Bằng USDT)
-    if (t.id === 'TX-242974' && (t.categoryId === 'cat_ads_fb_cold' || t.categoryGroup === 'marketing_ads' || t.categoryName.includes('Ads'))) {
+    if (t.id === 'TX-242974') {
       return {
         ...t,
         type: 'inflow',
+        accountId: 'acc_binance_usdt',
+        accountName: 'Ví USDT',
         categoryId: 'cat_rev_usdt_in',
         categoryName: 'Nhận Thanh Toán Bằng USDT',
         categoryGroup: 'revenue'
+      };
+    }
+    // Nếu giao dịch tiền VND nhưng lại bị chọn nhầm Ví USDT thì tự động đưa về Tài Khoản Ngân Hàng
+    if (t.originalCurrency === 'VND' && t.accountId === 'acc_binance_usdt') {
+      return {
+        ...t,
+        accountId: 'acc_techcom',
+        accountName: 'Tài Khoản Ngân Hàng (Bank VND)'
       };
     }
     // Sửa chung nếu giao dịch là Inflow nhưng lại mang nhóm marketing_ads do lỗi chọn trước đó
@@ -199,9 +220,33 @@ export default function App() {
   const [isShareholderModalOpen, setIsShareholderModalOpen] = useState(false);
   const [isRecoveryModalOpen, setIsRecoveryModalOpen] = useState(false);
 
-  // 1. Initial Test Connection on boot
+  // 1. Initial Test Connection on boot & auto-detect shared sheetId from URL (?sheetId=...)
   useEffect(() => {
     testFirebaseConnection();
+
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const paramSheetId = urlParams.get('sheetId');
+      if (paramSheetId) {
+        const current = getLocalSheetsConfig();
+        if (current.spreadsheetId !== paramSheetId) {
+          const updated: GoogleSheetsSyncConfig = {
+            ...current,
+            spreadsheetId: paramSheetId,
+            spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${paramSheetId}/edit`,
+            autoSyncEnabled: true,
+          };
+          saveLocalSheetsConfig(updated);
+          setCloudSheetsConfig(updated);
+          setSyncToast({
+            type: 'success',
+            message: `🔗 Đã nhận liên kết Google Sheet dùng chung từ đồng nghiệp!`,
+            actionLabel: 'Mở xem Google Sheets',
+            onAction: () => setActiveTab('sheets_guide')
+          });
+        }
+      }
+    } catch (e) {}
   }, []);
 
   // Helper to read deleted account IDs
@@ -437,9 +482,16 @@ export default function App() {
         }
       }
     } catch (err: any) {
+      console.error(err);
+      let errMsg = err?.message || 'Không thể đăng nhập';
+      if (err?.code === 'auth/popup-closed-by-user') {
+        errMsg = 'Bạn đã đóng cửa sổ đăng nhập Google.';
+      } else if (errMsg.includes('access_denied') || errMsg.includes('403') || errMsg.includes('chưa hoàn tất') || errMsg.includes('testing')) {
+        errMsg = '⚠️ Lỗi 403: Tài khoản này chưa được thêm vào Test Users. Vui lòng đăng nhập bằng tài khoản chủ dự án (Nguyenhaduy1501@gmail.com).';
+      }
       setSyncToast({
         type: 'error',
-        message: `Lỗi kết nối Google: ${err.message || 'Không thể đăng nhập'}`
+        message: `Lỗi kết nối Google: ${errMsg}`
       });
     }
   };
@@ -481,9 +533,15 @@ export default function App() {
       });
     } catch (err: any) {
       console.error(err);
+      let errMsg = err?.message || 'Không thể ghi dữ liệu';
+      if (err?.code === 'auth/popup-closed-by-user') {
+        errMsg = 'Bạn đã đóng cửa sổ đăng nhập Google.';
+      } else if (errMsg.includes('access_denied') || errMsg.includes('403') || errMsg.includes('chưa hoàn tất') || errMsg.includes('testing')) {
+        errMsg = '⚠️ Lỗi 403: Tài khoản chưa thuộc danh sách Test Users. Hãy đăng nhập bằng email chủ dự án (Nguyenhaduy1501@gmail.com).';
+      }
       setSyncToast({
         type: 'error',
-        message: `Lỗi lưu Google Sheet: ${err.message || 'Không thể ghi dữ liệu'}`
+        message: `Lỗi lưu Google Sheet: ${errMsg}`
       });
     }
   };

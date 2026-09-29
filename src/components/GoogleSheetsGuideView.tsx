@@ -13,7 +13,8 @@ import {
   Download,
   Copy,
   Check,
-  Activity
+  Activity,
+  Share2
 } from 'lucide-react';
 import { AccountWallet, ExchangeRate, Transaction } from '../types/cashflow';
 import { exportTransactionsToCSV } from '../utils/exportUtils';
@@ -108,7 +109,11 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
     } catch (err: any) {
       console.error(err);
       let errorMsg = err?.message || 'Vui lòng thử lại';
-      if (err?.code === 'auth/unauthorized-domain' || errorMsg.includes('unauthorized-domain')) {
+      if (err?.code === 'auth/popup-closed-by-user') {
+        errorMsg = 'Bạn đã đóng cửa sổ đăng nhập Google trước khi hoàn tất.';
+      } else if (errorMsg.includes('access_denied') || errorMsg.includes('403') || errorMsg.includes('chưa hoàn tất') || errorMsg.includes('testing')) {
+        errorMsg = '⚠️ Lỗi 403 (access_denied): Tài khoản Gmail này chưa được cấp phép trong danh sách Người dùng thử nghiệm (Test Users). Hãy đăng nhập bằng tài khoản chủ dự án (Nguyenhaduy1501@gmail.com) hoặc thêm email này vào Google Cloud Console > OAuth consent screen > Test users.';
+      } else if (err?.code === 'auth/unauthorized-domain' || errorMsg.includes('unauthorized-domain')) {
         const currentDomain = window.location.hostname;
         errorMsg = `Tên miền "${currentDomain}" chưa được thêm vào Firebase Authorized Domains. Hãy vào Firebase Console > Authentication > Settings > Authorized domains và thêm chính xác "${currentDomain}".`;
       }
@@ -345,6 +350,18 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
     }
   };
 
+  const handleCopyShareLink = () => {
+    if (!syncConfig.spreadsheetId) return;
+    const shareUrl = `${window.location.origin}${window.location.pathname}?sheetId=${syncConfig.spreadsheetId}`;
+    navigator.clipboard.writeText(shareUrl);
+    setCopiedKey('share_url');
+    setTimeout(() => setCopiedKey(null), 4000);
+    setSyncMessage({
+      type: 'success',
+      text: '📋 ĐÃ SAO CHÉP LINK DÙNG CHUNG! Hãy gửi link này cho đồng nghiệp. Khi họ mở link trên máy của họ, OmniFlow sẽ tự động nhận diện và kết nối với file Google Sheet này.',
+    });
+  };
+
   const sheetsStructure = [
     {
       id: 'sheet_danhmuc_quy',
@@ -533,6 +550,15 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
                       <span>Mở Google Sheets</span>
                     </a>
                   )}
+
+                  <button
+                    onClick={handleCopyShareLink}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 font-semibold text-xs rounded-lg border border-indigo-500/30 transition-all cursor-pointer shadow-xs"
+                    title="Sao chép link mời đồng nghiệp kết nối cùng Google Sheet này"
+                  >
+                    {copiedKey === 'share_url' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Share2 className="w-3.5 h-3.5 text-indigo-400" />}
+                    <span>{copiedKey === 'share_url' ? 'Đã sao chép link!' : 'Chia Sẻ Cho Đồng Nghiệp'}</span>
+                  </button>
                 </>
               )}
 

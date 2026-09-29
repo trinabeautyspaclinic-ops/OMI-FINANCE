@@ -140,11 +140,20 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     }
   };
 
-  // When currency changes, update default rate
+  // When currency changes, update default rate and auto-match compatible account
   const handleCurrencyChange = (newCurr: Currency) => {
     setOriginalCurrency(newCurr);
     const r = getRateForCurrency(newCurr, rates);
     setCustomRate(r);
+
+    // Tự động chuyển quỹ phù hợp theo loại tiền để tránh nhập nhầm (VD: tiền VND thì chọn Tài khoản VND)
+    const currentAcc = accounts.find(a => a.id === accountId);
+    if (!currentAcc || currentAcc.currency !== newCurr) {
+      const matchAcc = accounts.find(a => a.currency === newCurr);
+      if (matchAcc) {
+        setAccountId(matchAcc.id);
+      }
+    }
   };
 
   const handleResetToMarketRate = () => {
