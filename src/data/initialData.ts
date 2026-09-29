@@ -138,8 +138,73 @@ export const INITIAL_SHAREHOLDERS: Shareholder[] = [
   }
 ];
 
-// Danh sách giao dịch ban đầu rỗng để bắt đầu quản lý mới
-export const INITIAL_TRANSACTIONS: Transaction[] = [];
+// Danh sách giao dịch ban đầu (4 giao dịch thực tế ngày 28/09 của doanh nghiệp)
+export const INITIAL_TRANSACTIONS: Transaction[] = [
+  {
+    id: 'TX-242974',
+    date: '2026-09-28',
+    type: 'inflow',
+    categoryId: 'cat_ads_fb_cold',
+    categoryName: 'Ads Facebook: Tìm Khách Mới',
+    categoryGroup: 'marketing_ads',
+    accountId: 'acc_binance_usdt',
+    accountName: 'Ví USDT',
+    originalCurrency: 'USDT',
+    originalAmount: 7663.54,
+    exchangeRate: 25650,
+    amountVND: 196569801,
+    description: 'Nhận',
+    createdAt: '2026-09-28T09:00:00.000Z',
+  },
+  {
+    id: 'TX-295374',
+    date: '2026-09-28',
+    type: 'outflow',
+    categoryId: 'cat_fee_bank',
+    categoryName: 'Phí Dịch Vụ Ngân Hàng / Chuyển Tiền',
+    categoryGroup: 'financial_fee',
+    accountId: 'acc_binance_usdt',
+    accountName: 'Ví USDT',
+    originalCurrency: 'USDT',
+    originalAmount: 8000,
+    exchangeRate: 25650,
+    amountVND: 205200000,
+    description: 'Bán',
+    createdAt: '2026-09-28T10:15:00.000Z',
+  },
+  {
+    id: 'TX-567013',
+    date: '2026-09-28',
+    type: 'outflow',
+    categoryId: 'cat_cogs_goods',
+    categoryName: 'Tiền Nhập Hàng / Nguyên Liệu',
+    categoryGroup: 'cogs',
+    accountId: 'acc_binance_usdt',
+    accountName: 'Ví USDT',
+    originalCurrency: 'VND',
+    originalAmount: 1000000,
+    exchangeRate: 1,
+    amountVND: 1000000,
+    description: 'Cọc may đồng phục',
+    createdAt: '2026-09-28T14:30:00.000Z',
+  },
+  {
+    id: 'TX-706876',
+    date: '2026-09-28',
+    type: 'inflow',
+    categoryId: 'cat_ads_fb_cold',
+    categoryName: 'Ads Facebook: Tìm Khách Mới',
+    categoryGroup: 'marketing_ads',
+    accountId: 'acc_binance_usdt',
+    accountName: 'Ví USDT',
+    originalCurrency: 'VND',
+    originalAmount: 207539179,
+    exchangeRate: 1,
+    amountVND: 207539179,
+    description: 'Bán 8000',
+    createdAt: '2026-09-28T16:45:00.000Z',
+  }
+];
 
 // Danh sách chia cổ tức rỗng
 export const INITIAL_DIVIDEND_DISTRIBUTIONS: DividendDistribution[] = [];

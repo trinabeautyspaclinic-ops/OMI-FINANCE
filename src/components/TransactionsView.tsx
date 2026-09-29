@@ -10,7 +10,8 @@ import {
   Trash2,
   AlertTriangle,
   ArrowRightLeft,
-  History
+  History,
+  FileSpreadsheet
 } from 'lucide-react';
 import { AccountWallet, Category, CategoryGroup, Transaction } from '../types/cashflow';
 import { formatMoney } from '../utils/cashflowCalculations';
@@ -26,6 +27,7 @@ interface TransactionsViewProps {
   onClearAllTransactions?: () => void;
   onLoadUsdtSheetData?: () => void;
   onOpenRecoveryModal?: () => void;
+  onSyncAllToGoogleSheet?: () => void;
   highlightTxId?: string;
 }
 
@@ -39,12 +41,15 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   onClearAllTransactions,
   onLoadUsdtSheetData,
   onOpenRecoveryModal,
+  onSyncAllToGoogleSheet,
   highlightTxId,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | 'inflow' | 'outflow' | 'transfer'>('all');
   const [accountFilter, setAccountFilter] = useState<string>('all');
   const [groupFilter, setGroupFilter] = useState<CategoryGroup | 'all'>('all');
+
+  const count2809 = transactions.filter(t => t.date === '2026-09-28').length;
 
   const filteredTransactions = transactions.filter(tx => {
     // Search keyword
@@ -54,7 +59,8 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
       tx.categoryName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (tx.partnerOrBranch && tx.partnerOrBranch.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (tx.referenceCode && tx.referenceCode.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      tx.id.toLowerCase().includes(searchTerm.toLowerCase());
+      tx.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      tx.date.includes(searchTerm);
 
     // Type filter
     const matchesType = typeFilter === 'all' || tx.type === typeFilter;
@@ -66,6 +72,13 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     const matchesGroup = groupFilter === 'all' || tx.categoryGroup === groupFilter;
 
     return matchesSearch && matchesType && matchesAccount && matchesGroup;
+  });
+
+  const sortedFilteredTransactions = [...filteredTransactions].sort((a, b) => {
+    const timeA = new Date(a.date).getTime() || 0;
+    const timeB = new Date(b.date).getTime() || 0;
+    if (timeB !== timeA) return timeB - timeA;
+    return (b.createdAt || '').localeCompare(a.createdAt || '');
   });
 
   return (
@@ -124,10 +137,34 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
             <option value="revenue">Doanh Thu Các Cơ Sở</option>
             <option value="financial_fee">Phí Ngân Hàng</option>
           </select>
+
+          {count2809 > 0 && (
+            <button
+              onClick={() => setSearchTerm(searchTerm === '2026-09-28' ? '' : '2026-09-28')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer border ${
+                searchTerm === '2026-09-28'
+                  ? 'bg-amber-500 text-slate-950 border-amber-400 font-bold'
+                  : 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
+              }`}
+              title="Bấm để lọc nhanh 4 giao dịch ngày 28/09"
+            >
+              <span>📅 Giao dịch 28/09 ({count2809})</span>
+            </button>
+          )}
         </div>
 
         {/* Action Buttons */}
         <div className="flex flex-wrap items-center gap-2 self-end md:self-auto">
+          {onSyncAllToGoogleSheet && (
+            <button
+              onClick={onSyncAllToGoogleSheet}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-lg border border-emerald-500/30 transition-colors cursor-pointer shadow-2xs"
+              title="Lưu toàn bộ sổ giao dịch (bao gồm ngày 28/09) và số dư các quỹ sang Google Sheet"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Lưu Sang Google Sheet</span>
+            </button>
+          )}
           {onOpenRecoveryModal && (
             <button
               onClick={onOpenRecoveryModal}
@@ -239,7 +276,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                   </td>
                 </tr>
               ) : (
-                filteredTransactions.map(tx => {
+                sortedFilteredTransactions.map(tx => {
                   const isInflow = tx.type === 'inflow';
                   const isTransfer = tx.type === 'transfer';
                   const isHighValue = tx.amountVND >= 50000000;

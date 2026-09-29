@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   INITIAL_ACCOUNTS, 
   INITIAL_CATEGORIES, 
@@ -76,11 +76,22 @@ export default function App() {
       const saved = localStorage.getItem('omniflow_transactions_v3');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Bảo vệ các giao dịch ngày 28/09: Luôn đảm bảo có mặt trong sổ
+          const idSet = new Set(parsed.map((t: any) => t.id));
+          const missing = INITIAL_TRANSACTIONS.filter(t => !idSet.has(t.id));
+          if (missing.length > 0) {
+            const merged = [...parsed, ...missing];
+            localStorage.setItem('omniflow_transactions_v3', JSON.stringify(merged));
+            return merged;
+          }
+          return parsed;
+        }
       }
     } catch (e) {
       console.warn('Lỗi đọc giao dịch từ localStorage:', e);
     }
+    localStorage.setItem('omniflow_transactions_v3', JSON.stringify(INITIAL_TRANSACTIONS));
     return INITIAL_TRANSACTIONS;
   });
 
@@ -172,8 +183,19 @@ export default function App() {
   useEffect(() => {
     const unsubscribeTx = subscribeToTransactions((cloudTx) => {
       if (cloudTx && cloudTx.length > 0) {
-        setTransactions(cloudTx);
-        localStorage.setItem('omniflow_transactions_v3', JSON.stringify(cloudTx));
+        // Đảm bảo không ghi đè mất 4 giao dịch ngày 28/09
+        const cloudIdSet = new Set(cloudTx.map(t => t.id));
+        const missingInitial = INITIAL_TRANSACTIONS.filter(t => !cloudIdSet.has(t.id));
+        let finalTxs = cloudTx;
+        if (missingInitial.length > 0) {
+          finalTxs = [...cloudTx, ...missingInitial];
+          saveTransactionsBulkToCloud(missingInitial).catch(console.warn);
+        }
+        setTransactions(finalTxs);
+        localStorage.setItem('omniflow_transactions_v3', JSON.stringify(finalTxs));
+      } else {
+        // Nếu cloud chưa có giao dịch, lưu INITIAL_TRANSACTIONS (gồm 28/09) lên cloud
+        saveTransactionsBulkToCloud(INITIAL_TRANSACTIONS).catch(console.warn);
       }
     });
 
@@ -286,6 +308,16 @@ export default function App() {
     };
   }, []);
 
+  // Sắp xếp giao dịch mới nhất lên đầu để người dùng nhìn thấy ngay các giao dịch 28/09
+  const sortedTransactions = useMemo(() => {
+    return [...transactions].sort((a, b) => {
+      const timeA = new Date(a.date).getTime() || 0;
+      const timeB = new Date(b.date).getTime() || 0;
+      if (timeB !== timeA) return timeB - timeA;
+      return (b.createdAt || '').localeCompare(a.createdAt || '');
+    });
+  }, [transactions]);
+
   // Compute Account Balances & Active Alerts
   const balances = calculateAccountBalances(accounts, transactions, rates);
   const activeAlerts = detectActiveAlerts(accounts, balances, transactions, alertConfig);
@@ -375,6 +407,72 @@ export default function App() {
       });
     }
   };
+
+  const handleSyncAllToGoogleSheet = async () => {
+    const sheetsCfg = cloudSheetsConfig?.spreadsheetId ? cloudSheetsConfig : getLocalSheetsConfig();
+    if (!sheetsCfg.spreadsheetId) {
+      setSyncToast({
+        type: 'warning',
+        message: '⚠️ Bạn chưa liên kết file Google Sheet. Vui lòng mở tab "Google Sheets" để gắn link bảng tính.',
+        actionLabel: 'Mở Tab Google Sheets',
+        onAction: () => setActiveTab('sheets_guide')
+      });
+      return;
+    }
+
+    try {
+      setSyncToast({
+        type: 'warning',
+        message: 'Đang chuẩn bị lưu toàn bộ sổ giao dịch (bao gồm ngày 28/09) sang Google Sheet...'
+      });
+
+      let token = await getAccessToken();
+      if (!token) {
+        const loginRes = await googleSignIn();
+        token = loginRes?.accessToken || null;
+      }
+
+      if (!token) {
+        throw new Error('Chưa đăng nhập tài khoản Google. Vui lòng thử lại.');
+      }
+
+      await syncAllTransactionsToSheet(token, sheetsCfg.spreadsheetId, transactions);
+      await syncAccountsToSheet(token, sheetsCfg.spreadsheetId, accounts, transactions, rates);
+
+      setSyncToast({
+        type: 'success',
+        message: `✅ ĐÃ LƯU TOÀN BỘ ${transactions.length} GIAO DỊCH VÀ SỐ DƯ CÁC QUỸ SANG GOOGLE SHEET THÀNH CÔNG!`
+      });
+    } catch (err: any) {
+      console.error(err);
+      setSyncToast({
+        type: 'error',
+        message: `Lỗi lưu Google Sheet: ${err.message || 'Không thể ghi dữ liệu'}`
+      });
+    }
+  };
+
+  // Tự động kiểm tra và đồng bộ giao dịch sang Google Sheet nếu đã đăng nhập sẵn
+  useEffect(() => {
+    const autoSyncToSheetIfReady = async () => {
+      const sheetsCfg = cloudSheetsConfig?.spreadsheetId ? cloudSheetsConfig : getLocalSheetsConfig();
+      if (!sheetsCfg.spreadsheetId || !sheetsCfg.autoSyncEnabled) return;
+
+      const token = await getAccessToken();
+      if (token) {
+        try {
+          await syncAllTransactionsToSheet(token, sheetsCfg.spreadsheetId, transactions);
+          await syncAccountsToSheet(token, sheetsCfg.spreadsheetId, accounts, transactions, rates);
+          console.log('[AutoSync] Tự động đồng bộ giao dịch và số dư sang Google Sheet thành công!');
+        } catch (e) {
+          console.warn('[AutoSync] Lỗi tự động đồng bộ sang Google Sheet:', e);
+        }
+      }
+    };
+
+    const timer = setTimeout(autoSyncToSheetIfReady, 1500);
+    return () => clearTimeout(timer);
+  }, [cloudSheetsConfig?.spreadsheetId]);
 
   // Handlers with instant Cloud & Google Sheets persistence
   const handleSaveTransaction = async (savedTx: Transaction) => {
@@ -803,13 +901,14 @@ export default function App() {
                 </button>
               </div>
               <TransactionsView
-                transactions={transactions.slice(0, 8)}
+                transactions={sortedTransactions.slice(0, 8)}
                 accounts={accounts}
                 categories={categories}
                 onOpenNewTransaction={handleOpenNewTransaction}
                 onEditTransaction={handleEditTransaction}
                 onDeleteTransaction={handleDeleteTransaction}
                 onOpenRecoveryModal={() => setIsRecoveryModalOpen(true)}
+                onSyncAllToGoogleSheet={handleSyncAllToGoogleSheet}
               />
             </div>
           </div>
@@ -834,7 +933,7 @@ export default function App() {
 
         {activeTab === 'transactions' && (
           <TransactionsView
-            transactions={transactions}
+            transactions={sortedTransactions}
             accounts={accounts}
             categories={categories}
             onOpenNewTransaction={handleOpenNewTransaction}
@@ -843,6 +942,7 @@ export default function App() {
             onClearAllTransactions={handleClearAllOldTransactions}
             onLoadUsdtSheetData={handleImportUsdtSheet}
             onOpenRecoveryModal={() => setIsRecoveryModalOpen(true)}
+            onSyncAllToGoogleSheet={handleSyncAllToGoogleSheet}
           />
         )}
 

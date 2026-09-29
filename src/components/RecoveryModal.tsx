@@ -28,6 +28,7 @@ import {
 } from '../utils/recoveryUtils';
 import { fetchTransactionsFromSheet, getLocalSheetsConfig } from '../services/googleSheetsSync';
 import { getAccessToken, googleSignIn } from '../services/firebase';
+import { INITIAL_TRANSACTIONS } from '../data/initialData';
 
 interface RecoveryModalProps {
   isOpen: boolean;
@@ -46,7 +47,7 @@ export const RecoveryModal: React.FC<RecoveryModalProps> = ({
   accounts,
   categories,
 }) => {
-  const [activeTab, setActiveTab] = useState<'scan' | 'usdt_seed' | 'sheet' | 'csv' | 'guide'>('scan');
+  const [activeTab, setActiveTab] = useState<'scan' | 'tx_2809' | 'usdt_seed' | 'sheet' | 'csv' | 'guide'>('tx_2809');
   const [localBackups, setLocalBackups] = useState<LocalBackupInfo[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -87,6 +88,15 @@ export const RecoveryModal: React.FC<RecoveryModalProps> = ({
     setStatusMessage({
       type: 'success',
       text: `✅ Đã khôi phục thành công ${backup.transactions.length} giao dịch từ nguồn "${backup.key}"!`,
+    });
+  };
+
+  // 1.5. Nạp lại 4 giao dịch thực tế ngày 28/09
+  const handleApply2809 = (mode: 'merge' | 'replace') => {
+    onRestoreTransactions(INITIAL_TRANSACTIONS, mode);
+    setStatusMessage({
+      type: 'success',
+      text: `✅ ĐÃ NẠP THÀNH CÔNG 4 GIAO DỊCH NGÀY 28/09 VÀO SỔ CÁI! Bạn có thể lưu ngay sang Google Sheet bất cứ lúc nào.`,
     });
   };
 
@@ -262,6 +272,18 @@ export const RecoveryModal: React.FC<RecoveryModalProps> = ({
         {/* Tab Selection */}
         <div className="flex items-center gap-1 px-6 pt-3 pb-2 border-b border-slate-800/80 bg-slate-950/40 shrink-0 overflow-x-auto">
           <button
+            onClick={() => { setActiveTab('tx_2809'); setStatusMessage(null); }}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'tx_2809'
+                ? 'bg-amber-500 text-slate-950 font-bold shadow-xs'
+                : 'text-amber-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <span>4 Giao Dịch Ngày 28/09 (Mới)</span>
+          </button>
+
+          <button
             onClick={() => { setActiveTab('scan'); setStatusMessage(null); }}
             className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'scan'
@@ -338,6 +360,78 @@ export const RecoveryModal: React.FC<RecoveryModalProps> = ({
                 <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
               )}
               <div className="flex-1 leading-relaxed whitespace-pre-line">{statusMessage.text}</div>
+            </div>
+          )}
+
+          {/* TAB 0: 4 Giao dịch thực tế ngày 28/09 */}
+          {activeTab === 'tx_2809' && (
+            <div className="space-y-4">
+              <div className="bg-gradient-to-r from-amber-950/40 via-slate-900 to-slate-950 p-4 rounded-xl border border-amber-500/40 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-400" />
+                    <h4 className="text-xs font-bold text-amber-300">4 Giao Dịch Thực Tế Bạn Đã Điền Ngày 28/09/2026</h4>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-bold border border-amber-500/30">
+                    Đã chuẩn bị sẵn
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Dưới đây là chi tiết toàn bộ 4 giao dịch đã được hệ thống lưu trữ. Bạn có thể nạp vào sổ cái OmniFlow ngay lập tức bằng 1 chạm:
+                </p>
+
+                <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                  {INITIAL_TRANSACTIONS.map((tx, idx) => (
+                    <div
+                      key={tx.id}
+                      className="bg-slate-950/80 border border-slate-800/80 rounded-lg p-2.5 flex items-center justify-between gap-3 text-xs"
+                    >
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
+                            tx.type === 'inflow' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
+                          }`}>
+                            {tx.type === 'inflow' ? '+ THU' : '- CHI'}
+                          </span>
+                          <span className="font-semibold text-slate-200">{tx.description || tx.categoryName}</span>
+                          <span className="text-[10px] text-slate-500 font-mono">({tx.id})</span>
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          {tx.date} • {tx.accountName} • {tx.categoryName}
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <div className="font-mono font-bold text-slate-200">
+                          {tx.originalCurrency === 'USDT' 
+                            ? `${tx.originalAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })} USDT`
+                            : `${tx.amountVND.toLocaleString('vi-VN')} đ`}
+                        </div>
+                        {tx.originalCurrency === 'USDT' && (
+                          <div className="text-[10px] text-slate-400 font-mono">
+                            ≈ {tx.amountVND.toLocaleString('vi-VN')} đ
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="pt-2 flex flex-wrap items-center gap-3">
+                  <button
+                    onClick={() => handleApply2809('merge')}
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold rounded-xl shadow-md transition-colors cursor-pointer"
+                  >
+                    📥 Nạp 4 Giao Dịch 28/09 Vào Sổ Cái
+                  </button>
+                  <button
+                    onClick={() => handleApply2809('replace')}
+                    className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-xl transition-colors cursor-pointer"
+                  >
+                    Đặt Sổ Cái Về Đúng 4 Giao Dịch Này
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
