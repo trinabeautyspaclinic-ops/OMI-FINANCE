@@ -9,7 +9,8 @@ import {
   Edit3, 
   Trash2,
   AlertTriangle,
-  ArrowRightLeft
+  ArrowRightLeft,
+  History
 } from 'lucide-react';
 import { AccountWallet, Category, CategoryGroup, Transaction } from '../types/cashflow';
 import { formatMoney } from '../utils/cashflowCalculations';
@@ -24,6 +25,7 @@ interface TransactionsViewProps {
   onDeleteTransaction: (id: string) => void;
   onClearAllTransactions?: () => void;
   onLoadUsdtSheetData?: () => void;
+  onOpenRecoveryModal?: () => void;
   highlightTxId?: string;
 }
 
@@ -36,6 +38,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   onDeleteTransaction,
   onClearAllTransactions,
   onLoadUsdtSheetData,
+  onOpenRecoveryModal,
   highlightTxId,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -124,11 +127,22 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center gap-2 self-end md:self-auto">
+        <div className="flex flex-wrap items-center gap-2 self-end md:self-auto">
+          {onOpenRecoveryModal && (
+            <button
+              onClick={onOpenRecoveryModal}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 rounded-lg border border-amber-500/30 transition-colors cursor-pointer"
+              title="Tìm lại lịch sử giao dịch cũ từ bộ nhớ máy tính, bản sao lưu hoặc Google Sheets"
+            >
+              <History className="w-3.5 h-3.5 text-amber-400" />
+              <span>Khôi Phục Lịch Sử</span>
+            </button>
+          )}
+
           {onLoadUsdtSheetData && (
             <button
               onClick={onLoadUsdtSheetData}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 rounded-lg border border-amber-500/30 transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 rounded-lg border border-amber-500/30 transition-colors cursor-pointer"
               title="Nạp tự động 28 giao dịch từ bảng Thu Chi USDT"
             >
               <span>📥 Nạp Sổ Thu Chi USDT</span>
@@ -138,7 +152,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
           {onClearAllTransactions && transactions.length > 0 && (
             <button
               onClick={onClearAllTransactions}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 rounded-lg border border-rose-500/30 transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 rounded-lg border border-rose-500/30 transition-colors cursor-pointer"
               title="Xóa toàn bộ các giao dịch cũ để bắt đầu sổ cái mới"
             >
               <Trash2 className="w-3.5 h-3.5 text-rose-400" />
@@ -148,7 +162,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
 
           <button
             onClick={() => exportTransactionsToCSV(filteredTransactions)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 bg-slate-950 hover:bg-slate-800 rounded-lg border border-slate-800 transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 bg-slate-950 hover:bg-slate-800 rounded-lg border border-slate-800 transition-colors cursor-pointer"
             title="Xuất file CSV"
           >
             <Download className="w-3.5 h-3.5 text-slate-400" />
@@ -157,7 +171,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
 
           <button
             onClick={onOpenNewTransaction}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg transition-colors shadow-sm"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg transition-colors shadow-sm cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Thêm Giao Dịch</span>
@@ -187,17 +201,40 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
               {filteredTransactions.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="py-12 text-center">
-                    <div className="max-w-sm mx-auto space-y-3">
+                    <div className="max-w-md mx-auto space-y-3">
                       <p className="text-slate-400 text-xs">
-                        Sổ cái đang sạch sẽ (đã xóa hết các giao dịch mẫu). Bạn có thể bắt đầu nhập giao dịch thu, chi thực tế phát sinh từ hôm nay.
+                        {transactions.length > 0 
+                          ? `Có ${transactions.length} giao dịch trong sổ cái nhưng bị ẩn do bộ lọc tìm kiếm/loại/quỹ.`
+                          : 'Hiện chưa có giao dịch nào hiển thị trong sổ cái.'}
                       </p>
-                      <button
-                        onClick={onOpenNewTransaction}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs rounded-lg transition-colors"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>+ Nhập Giao Dịch Đầu Tiên</span>
-                      </button>
+                      <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                        <button
+                          onClick={onOpenNewTransaction}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs rounded-xl shadow transition-colors cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>+ Nhập Giao Dịch Mới</span>
+                        </button>
+
+                        {onOpenRecoveryModal && (
+                          <button
+                            onClick={onOpenRecoveryModal}
+                            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 font-semibold text-xs rounded-xl transition-colors cursor-pointer"
+                          >
+                            <History className="w-3.5 h-3.5 text-amber-400" />
+                            <span>Tìm Lại Lịch Sử Giao Dịch Cũ</span>
+                          </button>
+                        )}
+
+                        {onLoadUsdtSheetData && transactions.length === 0 && (
+                          <button
+                            onClick={onLoadUsdtSheetData}
+                            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs rounded-xl border border-slate-700 transition-colors cursor-pointer"
+                          >
+                            <span>📥 Nạp 28 Bút Toán Gốc USDT</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </td>
                 </tr>

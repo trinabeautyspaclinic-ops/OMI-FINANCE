@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { X, ArrowUpRight, ArrowDownRight, Calculator, Edit3, RotateCcw } from 'lucide-react';
+import { X, ArrowUpRight, ArrowDownRight, Calculator, Edit3, RotateCcw, FileSpreadsheet, KeyRound, CheckCircle2, AlertCircle } from 'lucide-react';
 import { AccountWallet, Category, Currency, ExchangeRate, Transaction } from '../types/cashflow';
 import { formatMoney, getRateForCurrency } from '../utils/cashflowCalculations';
+import { getLocalSheetsConfig } from '../services/googleSheetsSync';
+import { getAccessToken, googleSignIn } from '../services/firebase';
 
 interface TransactionModalProps {
   isOpen: boolean;
@@ -36,6 +38,29 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   const [description, setDescription] = useState<string>('');
   const [customCategoryName, setCustomCategoryName] = useState<string>('');
   const [isCustomCategory, setIsCustomCategory] = useState<boolean>(false);
+  const [hasGoogleToken, setHasGoogleToken] = useState<boolean>(false);
+  const [isSigningInGoogle, setIsSigningInGoogle] = useState<boolean>(false);
+
+  // Check Google Token whenever modal opens
+  useEffect(() => {
+    if (isOpen) {
+      getAccessToken().then(tok => setHasGoogleToken(Boolean(tok)));
+    }
+  }, [isOpen]);
+
+  const handleConnectGoogleInModal = async () => {
+    setIsSigningInGoogle(true);
+    try {
+      const res = await googleSignIn();
+      if (res?.accessToken) {
+        setHasGoogleToken(true);
+      }
+    } catch (e: any) {
+      console.warn('Google sign-in error in modal:', e);
+    } finally {
+      setIsSigningInGoogle(false);
+    }
+  };
 
   // Pre-fill when editing or creating
   useEffect(() => {
@@ -424,24 +449,58 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
           </div>
 
           {/* Buttons */}
-          <div className="flex items-center justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-3.5 py-1.5 text-slate-400 hover:text-white"
-            >
-              Hủy
-            </button>
-            <button
-              type="submit"
-              className={`px-4 py-2 rounded-lg font-bold text-xs transition-colors ${
-                type === 'inflow'
-                  ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'
-                  : 'bg-rose-500 hover:bg-rose-400 text-white'
-              }`}
-            >
-              {editingTransaction ? 'Cập Nhật Giao Dịch' : type === 'inflow' ? 'Lưu Khoản Thu' : 'Lưu Khoản Chi'}
-            </button>
+          <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-800/80">
+            <div className="text-[11px] flex items-center gap-1.5 max-w-[260px]">
+              {getLocalSheetsConfig().spreadsheetId ? (
+                hasGoogleToken ? (
+                  <span className="text-emerald-400 flex items-center gap-1.5 truncate text-[11px] font-medium" title="Đã có quyền Google - Giao dịch sẽ được ghi thẳng vào Google Sheet">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span className="truncate">Tự động lưu vào Google Sheet</span>
+                  </span>
+                ) : (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-amber-400 flex items-center gap-1 text-[11px]" title="Chưa đăng nhập Google hoặc phiên đã hết hạn">
+                      <AlertCircle className="w-3 h-3 text-amber-400 shrink-0" />
+                      <span className="truncate">Chưa nối Sheet:</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleConnectGoogleInModal}
+                      disabled={isSigningInGoogle}
+                      className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-bold rounded border border-amber-500/40 cursor-pointer flex items-center gap-1"
+                    >
+                      <KeyRound className="w-2.5 h-2.5" />
+                      <span>{isSigningInGoogle ? 'Đang nối...' : 'Cấp quyền Google'}</span>
+                    </button>
+                  </div>
+                )
+              ) : (
+                <span className="text-slate-500 truncate flex items-center gap-1">
+                  <span>Lưu sổ cái nội bộ</span>
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-3.5 py-1.5 text-slate-400 hover:text-white cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                type="submit"
+                className={`px-4 py-2 rounded-lg font-bold text-xs transition-colors cursor-pointer ${
+                  type === 'inflow'
+                    ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'
+                    : 'bg-rose-500 hover:bg-rose-400 text-white'
+                }`}
+              >
+                {editingTransaction ? 'Cập Nhật Giao Dịch' : type === 'inflow' ? 'Lưu Khoản Thu' : 'Lưu Khoản Chi'}
+              </button>
+            </div>
           </div>
         </form>
       </div>

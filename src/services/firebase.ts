@@ -105,6 +105,14 @@ export const getAccessToken = async (): Promise<string | null> => {
   return cachedAccessToken;
 };
 
+export const clearAccessToken = (): void => {
+  cachedAccessToken = null;
+  try {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    sessionStorage.removeItem('tf_google_oauth_token');
+  } catch (e) {}
+};
+
 export const googleSignOut = async (): Promise<void> => {
   await signOut(auth);
   cachedAccessToken = null;

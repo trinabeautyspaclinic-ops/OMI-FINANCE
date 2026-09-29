@@ -10,7 +10,8 @@ import {
   Coins,
   DollarSign,
   Building2,
-  Calendar
+  Calendar,
+  History
 } from 'lucide-react';
 import { AccountWallet, Currency, ExchangeRate, TimeFilterPeriod, Transaction } from '../types/cashflow';
 import { calculateAccountBalances, calculateCashFlowSummary, formatMoney } from '../utils/cashflowCalculations';
@@ -29,6 +30,7 @@ interface SummaryCardsProps {
   onOpenNewTransaction: () => void;
   onNavigateToFunds?: () => void;
   onNavigateToAllocation?: () => void;
+  onOpenRecoveryModal?: () => void;
 }
 
 export const SummaryCards: React.FC<SummaryCardsProps> = ({
@@ -44,7 +46,8 @@ export const SummaryCards: React.FC<SummaryCardsProps> = ({
   setCustomEndDate,
   onOpenNewTransaction,
   onNavigateToFunds,
-  onNavigateToAllocation
+  onNavigateToAllocation,
+  onOpenRecoveryModal
 }) => {
   const summary = calculateCashFlowSummary(filteredTransactions);
   const balances = calculateAccountBalances(accounts, transactions, rates);
@@ -82,6 +85,30 @@ export const SummaryCards: React.FC<SummaryCardsProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* CẢNH BÁO / KHÔI PHỤC KHI CHƯA CÓ HOẶC BỊ THẤT LẠC GIAO DỊCH */}
+      {transactions.length === 0 && onOpenRecoveryModal && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-200 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 shrink-0">
+              <History className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-xs font-bold text-white">Bạn chưa thấy lịch sử các giao dịch đã nhập mấy hôm trước?</h4>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Dữ liệu có thể đang nằm trong bản sao lưu trình duyệt, trên Google Sheets hoặc cần nạp lại 28 giao dịch gốc USDT.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onOpenRecoveryModal}
+            className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow-xs shrink-0 transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+          >
+            <History className="w-3.5 h-3.5" />
+            <span>Tìm Lại & Khôi Phục Lịch Sử Ngay</span>
+          </button>
+        </div>
+      )}
+
       {/* KHỐI ĐẦU TIÊN CỦA TỔNG QUAN: "TIỀN CÁC LOẠI CÒN BAO NHIÊU" */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">

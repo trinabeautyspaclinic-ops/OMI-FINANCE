@@ -1,10 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
   FileSpreadsheet, 
-  Copy, 
-  Check, 
-  Download, 
-  Layers, 
   ExternalLink,
   RefreshCw,
   CheckCircle2,
@@ -13,15 +9,20 @@ import {
   Database,
   Link,
   ArrowRight,
-  ShieldCheck
+  ShieldCheck,
+  Download,
+  Copy,
+  Check,
+  Activity
 } from 'lucide-react';
-import { Transaction } from '../types/cashflow';
+import { AccountWallet, ExchangeRate, Transaction } from '../types/cashflow';
 import { exportTransactionsToCSV } from '../utils/exportUtils';
 import { 
   getLocalSheetsConfig, 
   saveLocalSheetsConfig, 
   createOmniFlowSpreadsheet, 
   syncAllTransactionsToSheet,
+  syncAccountsToSheet,
   extractSpreadsheetId,
   verifySpreadsheetAccess,
   GoogleSheetsSyncConfig
@@ -31,14 +32,20 @@ import { User } from 'firebase/auth';
 
 interface GoogleSheetsGuideViewProps {
   transactions: Transaction[];
+  accounts?: AccountWallet[];
+  rates?: ExchangeRate[];
   cloudSheetsConfig?: GoogleSheetsSyncConfig | null;
   onSaveCloudSheetsConfig?: (config: GoogleSheetsSyncConfig) => void;
+  onNavigateToSyncLogs?: () => void;
 }
 
 export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({ 
   transactions,
+  accounts = [],
+  rates = [],
   cloudSheetsConfig,
-  onSaveCloudSheetsConfig
+  onSaveCloudSheetsConfig,
+  onNavigateToSyncLogs
 }) => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
@@ -87,24 +94,29 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
-  const handleLoginGoogle = async () => {
+  const handleLoginGoogle = async (): Promise<string | null> => {
     setIsSigningIn(true);
     setSyncMessage(null);
     try {
       const res = await googleSignIn();
-      setCurrentUser(res.user);
-      setAccessToken(res.accessToken);
+      if (res && res.accessToken) {
+        setCurrentUser(res.user);
+        setAccessToken(res.accessToken);
+        return res.accessToken;
+      }
+      return null;
     } catch (err: any) {
       console.error(err);
       let errorMsg = err?.message || 'Vui lòng thử lại';
       if (err?.code === 'auth/unauthorized-domain' || errorMsg.includes('unauthorized-domain')) {
         const currentDomain = window.location.hostname;
-        errorMsg = `Tên miền "${currentDomain}" chưa được thêm vào Firebase Authorized Domains. Hãy vào Firebase Console > Authentication > Settings > Authorized domains và thêm chính xác "${currentDomain}" (không có https:// hoặc dấu /). Lưu ý: Bạn vẫn sử dụng đầy đủ toàn bộ chức năng quản lý dòng tiền, số dư và chia cổ tức bình thường!`;
+        errorMsg = `Tên miền "${currentDomain}" chưa được thêm vào Firebase Authorized Domains. Hãy vào Firebase Console > Authentication > Settings > Authorized domains và thêm chính xác "${currentDomain}".`;
       }
       setSyncMessage({
         type: 'error',
         text: `Đăng nhập Google thất bại: ${errorMsg}`,
       });
+      return null;
     } finally {
       setIsSigningIn(false);
     }
@@ -114,6 +126,7 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
     await googleSignOut();
     setCurrentUser(null);
     setAccessToken(null);
+    setSyncMessage(null);
   };
 
   // Lưu cấu hình vào cả LocalStorage VÀ Cloud Firebase
@@ -127,31 +140,50 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
 
   // 1. Tạo Google Sheet mới tự động
   const handleCreateNewSheet = async () => {
-    if (!accessToken) {
-      alert('Vui lòng kết nối Google trước bằng nút Đăng nhập ở trên');
-      return;
-    }
-
     setIsSyncing(true);
     setSyncMessage(null);
 
+    let activeToken = accessToken;
+
+    if (!activeToken) {
+      setSyncMessage({ type: 'success', text: 'Đang mở cửa sổ đăng nhập Google...' });
+      activeToken = await handleLoginGoogle();
+      if (!activeToken) {
+        setIsSyncing(false);
+        return;
+      }
+    }
+
     try {
-      const result = await createOmniFlowSpreadsheet(accessToken, syncConfig.spreadsheetName);
-      // Đẩy data hiện tại sang
-      await syncAllTransactionsToSheet(accessToken, result.spreadsheetId, transactions);
+      const result = await createOmniFlowSpreadsheet(activeToken, syncConfig.spreadsheetName);
+      
+      // 1. Đẩy toàn bộ giao dịch vào tab "Sổ Giao Dịch"
+      const txTab = await syncAllTransactionsToSheet(activeToken, result.spreadsheetId, transactions);
+      
+      // 2. Đẩy danh mục quỹ vào tab "Danh Mục Quỹ & Số Dư"
+      let fundTab = '';
+      if (accounts && accounts.length > 0) {
+        try {
+          fundTab = await syncAccountsToSheet(activeToken, result.spreadsheetId, accounts, transactions, rates);
+        } catch (fErr) {
+          console.warn('Lỗi ghi tab quỹ:', fErr);
+        }
+      }
+
+      const syncTime = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' });
 
       const updatedConfig: GoogleSheetsSyncConfig = {
         ...syncConfig,
         spreadsheetId: result.spreadsheetId,
         spreadsheetUrl: result.spreadsheetUrl,
-        lastSyncedAt: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' }),
+        lastSyncedAt: syncTime,
       };
 
       persistConfig(updatedConfig);
 
       setSyncMessage({
         type: 'success',
-        text: `Đã khởi tạo thành công Google Sheet trên Drive và đồng bộ ${transactions.length} giao dịch! Cấu hình đã được lưu vĩnh viễn trên Cloud.`,
+        text: `✅ ĐÃ TẠO THÀNH CÔNG! Đã khởi tạo Google Sheet trên Google Drive của bạn và đồng bộ ${transactions.length} giao dịch vào tab "${txTab}"${fundTab ? ` & ${accounts.length} quỹ nguồn vào tab "${fundTab}"` : ''}. Bấm nút "Mở Google Sheets" bên dưới để xem trực tiếp!`,
       });
     } catch (error: any) {
       console.error(error);
@@ -164,46 +196,79 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
     }
   };
 
-  // 2. Liên kết một Sheet có sẵn bằng Link hoặc ID (Không bắt buộc phải đăng nhập Google ngay)
+  // 2. Liên kết một Sheet có sẵn bằng Link hoặc ID VÀ ĐỒNG BỘ NGAY LẬP TỨC
   const handleLinkExistingSheet = async () => {
-    if (!customSheetInput.trim()) {
-      alert('Vui lòng dán link Google Sheet vào ô');
+    const rawInput = customSheetInput.trim();
+    if (!rawInput) {
+      setSyncMessage({ type: 'error', text: 'Vui lòng dán link Google Sheet vào ô nhập liệu' });
       return;
     }
 
-    const extractedId = extractSpreadsheetId(customSheetInput);
+    let extractedId: string | null = null;
+    try {
+      extractedId = extractSpreadsheetId(rawInput);
+    } catch (err: any) {
+      setSyncMessage({ type: 'error', text: err.message || 'Link không hợp lệ' });
+      return;
+    }
+
     if (!extractedId) {
-      alert('Không nhận diện được ID Google Sheet từ đường link này. Vui lòng kiểm tra lại');
+      setSyncMessage({
+        type: 'error',
+        text: 'Không nhận diện được ID Google Sheet từ đường link này. Vui lòng mở Google Sheet và copy link đầy đủ dạng https://docs.google.com/spreadsheets/d/.../edit',
+      });
       return;
     }
 
     setIsLinkingCustomSheet(true);
     setSyncMessage(null);
 
-    try {
-      let sheetTitle = 'Google Sheet Đã Liên Kết';
-      let sheetUrl = customSheetInput.startsWith('http') 
-        ? customSheetInput 
-        : `https://docs.google.com/spreadsheets/d/${extractedId}/edit`;
+    let activeToken = accessToken;
 
-      // Nếu đã có token đăng nhập thì verify và sync dữ liệu luôn
-      if (accessToken) {
+    // BẮT BUỘC có token Google để ghi dữ liệu
+    if (!activeToken) {
+      setSyncMessage({
+        type: 'success',
+        text: 'Đang kết nối tài khoản Google để cấp quyền ghi vào Sheet của bạn...',
+      });
+      activeToken = await handleLoginGoogle();
+      if (!activeToken) {
+        setIsLinkingCustomSheet(false);
+        setSyncMessage({
+          type: 'error',
+          text: 'Chưa thể đồng bộ vì bạn chưa đăng nhập Google. Hãy bấm "Đăng nhập Google" phía trên để cấp quyền ghi vào Sheet.',
+        });
+        return;
+      }
+    }
+
+    try {
+      // Bước 1: Kiểm tra quyền truy cập và lấy tiêu đề Sheet
+      const verified = await verifySpreadsheetAccess(activeToken, extractedId);
+      const sheetTitle = verified.title;
+      const sheetUrl = verified.url;
+
+      // Bước 2: Đồng bộ toàn bộ giao dịch vào tab "Sổ Giao Dịch" (Tự tạo tab nếu chưa có)
+      const txTab = await syncAllTransactionsToSheet(activeToken, extractedId, transactions);
+
+      // Bước 3: Đồng bộ danh mục quỹ vào tab "Danh Mục Quỹ & Số Dư"
+      let fundTab = '';
+      if (accounts && accounts.length > 0) {
         try {
-          const verified = await verifySpreadsheetAccess(accessToken, extractedId);
-          sheetTitle = verified.title;
-          sheetUrl = verified.url;
-          await syncAllTransactionsToSheet(accessToken, extractedId, transactions);
-        } catch (vErr) {
-          console.warn('Không thể verify bằng token hiện tại:', vErr);
+          fundTab = await syncAccountsToSheet(activeToken, extractedId, accounts, transactions, rates);
+        } catch (fErr) {
+          console.warn('Lỗi đồng bộ tab quỹ:', fErr);
         }
       }
+
+      const syncTime = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' });
 
       const updatedConfig: GoogleSheetsSyncConfig = {
         ...syncConfig,
         spreadsheetId: extractedId,
         spreadsheetUrl: sheetUrl,
         spreadsheetName: sheetTitle,
-        lastSyncedAt: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' }),
+        lastSyncedAt: syncTime,
       };
 
       persistConfig(updatedConfig);
@@ -211,44 +276,63 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
 
       setSyncMessage({
         type: 'success',
-        text: `Đã lưu vĩnh viễn Link Google Sheet lên Cloud! Từ nay bạn mở máy nào hay deploy code mới thì link Sheet vẫn còn nguyên vẹn.`,
+        text: `✅ ĐÃ LIÊN KẾT & ĐỒNG BỘ THÀNH CÔNG! Đã ghi ${transactions.length} giao dịch vào tab "${txTab}"${fundTab ? ` và ${accounts.length} quỹ nguồn vào tab "${fundTab}"` : ''} của Google Sheet "${sheetTitle}". Bấm nút "Mở Google Sheets" bên dưới để kiểm tra ngay!`,
       });
     } catch (err: any) {
       console.error(err);
       setSyncMessage({
         type: 'error',
-        text: `Không thể lưu Sheet: ${err?.message || 'Vui lòng kiểm tra lại link'}`,
+        text: `Lỗi đồng bộ vào Google Sheet: ${err?.message || 'Vui lòng kiểm tra lại quyền truy cập hoặc link Sheet'}`,
       });
     } finally {
       setIsLinkingCustomSheet(false);
     }
   };
 
-  // 3. Đồng bộ lại toàn bộ dữ liệu
+  // 3. Đồng bộ lại toàn bộ dữ liệu thủ công
   const handleManualSyncNow = async () => {
-    if (!accessToken) {
-      alert('Vui lòng Đăng nhập với Google để thực hiện đồng bộ');
-      return;
-    }
     if (!syncConfig.spreadsheetId) {
-      alert('Chưa có liên kết với Google Sheets');
+      setSyncMessage({ type: 'error', text: 'Chưa có liên kết với Google Sheets. Vui lòng dán link trang tính ở ô bên dưới.' });
       return;
     }
 
     setIsSyncing(true);
     setSyncMessage(null);
 
+    let activeToken = accessToken;
+
+    if (!activeToken) {
+      setSyncMessage({ type: 'success', text: 'Đang mở cửa sổ đăng nhập Google...' });
+      activeToken = await handleLoginGoogle();
+      if (!activeToken) {
+        setIsSyncing(false);
+        return;
+      }
+    }
+
     try {
-      await syncAllTransactionsToSheet(accessToken, syncConfig.spreadsheetId, transactions);
+      const txTab = await syncAllTransactionsToSheet(activeToken, syncConfig.spreadsheetId, transactions);
+
+      let fundTab = '';
+      if (accounts && accounts.length > 0) {
+        try {
+          fundTab = await syncAccountsToSheet(activeToken, syncConfig.spreadsheetId, accounts, transactions, rates);
+        } catch (fErr) {
+          console.warn('Sync accounts note:', fErr);
+        }
+      }
+
+      const syncTime = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' });
+
       const updatedConfig: GoogleSheetsSyncConfig = {
         ...syncConfig,
-        lastSyncedAt: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' }),
+        lastSyncedAt: syncTime,
       };
       persistConfig(updatedConfig);
 
       setSyncMessage({
         type: 'success',
-        text: `Đã cập nhật toàn bộ ${transactions.length} giao dịch lên Google Sheets thành công!`,
+        text: `✅ ĐÃ ĐỒNG BỘ THÀNH CÔNG! Đã cập nhật ${transactions.length} giao dịch vào tab "${txTab}"${fundTab ? ` & số dư ${accounts.length} quỹ vào tab "${fundTab}"` : ''} lúc ${syncTime}.`,
       });
     } catch (error: any) {
       console.error(error);
@@ -264,56 +348,40 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
   const sheetsStructure = [
     {
       id: 'sheet_danhmuc_quy',
-      name: '1. Sheet DanhMucQuy (Quản Lý Chi Tiết Các Quỹ Tiền Mặt & Số Dư)',
-      desc: 'Quản lý 4 nhóm quỹ: Tiền mặt VND, Ngân hàng VND, Ngân hàng QT, Ví USDT. Theo dõi số dư thực tế và cảnh báo dưới mức tối thiểu.',
+      name: '1. Tab "Danh Mục Quỹ & Số Dư" (Quản Lý Chi Tiết Các Quỹ Nguồn & Cảnh Báo)',
+      desc: 'Quản lý 4 nhóm quỹ: Tiền mặt VND, Ngân hàng VND, Ngân hàng QT, Ví USDT. Tự động tính số dư thực tế và cảnh báo dưới mức an toàn tối thiểu.',
       columns: [
-        { name: 'A: Mã Quỹ', desc: 'QUY-VND-01, TECH-01, VP-ADS, MB-02, CHASE-USD, VIB-AED, BINANCE-USDT' },
-        { name: 'B: Tên Quỹ / Tài Khoản', desc: 'Két tiền mặt, Techcombank, Thẻ Ads VPBank, Chase USD, Ví Binance...' },
-        { name: 'C: Nhóm Quỹ', desc: 'Tiền mặt VND / Ngân hàng VND / Ngân hàng Quốc tế / Ví USDT' },
-        { name: 'D: Loại Tiền Tệ', desc: 'VND / USD / AED / USDT' },
-        { name: 'E: Số Dư Đầu Kỳ', desc: 'Số tiền ban đầu khi mở sổ' },
-        { name: 'F: Tổng Thu (Inflow)', desc: 'Công thức tự tính: =SUMIFS(SổGiaoDịch!F:F, SổGiaoDịch!C:C, "Thu", SổGiaoDịch!D:D, A2) + SUMIFS(SổGiaoDịch!F:F, SổGiaoDịch!C:C, "Chuyển", SổGiaoDịch!E:E, A2)' },
-        { name: 'G: Tổng Chi (Outflow)', desc: 'Công thức tự tính: =SUMIFS(SổGiaoDịch!F:F, SổGiaoDịch!C:C, "Chi", SổGiaoDịch!D:D, A2) + SUMIFS(SổGiaoDịch!F:F, SổGiaoDịch!C:C, "Chuyển", SổGiaoDịch!D:D, A2)' },
-        { name: 'H: Số Dư Hiện Tại', desc: '=E2 + F2 - G2' },
-        { name: 'I: Ngưỡng Tối Thiểu (Min)', desc: 'Mức an toàn tối thiểu (VD: Két 15M, VPBank 25M, USDT 3,500)' },
-        { name: 'J: Cảnh Báo Số Dư', desc: '=IF(H2<I2, "🔴 BÁO ĐỘNG THIẾU HỤT", "🟢 AN TOÀN")' }
-      ],
-      formulas: [
-        {
-          title: 'Công thức tính Số Dư Động Hiện Tại theo thời gian thực (Cột H):',
-          code: `=E2 + (SUMIFS(SổGiaoDịch!$F:$F, SổGiaoDịch!$C:$C, "Thu", SổGiaoDịch!$D:$D, A2) + SUMIFS(SổGiaoDịch!$F:$F, SổGiaoDịch!$C:$C, "Chuyển", SổGiaoDịch!$E:$E, A2)) - (SUMIFS(SổGiaoDịch!$F:$F, SổGiaoDịch!$C:$C, "Chi", SổGiaoDịch!$D:$D, A2) + SUMIFS(SổGiaoDịch!$F:$F, SổGiaoDịch!$C:$C, "Chuyển", SổGiaoDịch!$D:$D, A2))`
-        },
-        {
-          title: 'Công thức Cảnh Báo Số Dư Dưới Ngưỡng Tối Thiểu (Cột J):',
-          code: `=IF(H2<I2, "🔴 BÁO ĐỘNG THIẾU HỤT", "🟢 AN TOÀN")`
-        }
+        { name: 'A: Mã Quỹ', desc: 'ID định danh duy nhất (acc_techcom, acc_binance_usdt...)' },
+        { name: 'B: Tên Quỹ Nguồn', desc: 'Tài khoản Ngân hàng, Ví USDT, Két tiền mặt...' },
+        { name: 'C: Nhóm Quỹ', desc: 'Tiền mặt / Ngân hàng VN / Ngân hàng QT / Ví Crypto/USDT' },
+        { name: 'D: Loại Tiền', desc: 'VND / USDT / USD / AED / EUR' },
+        { name: 'E: Số Dư Ban Đầu', desc: 'Số dư gốc ban đầu của quỹ' },
+        { name: 'F: Số Dư Thực Tế Hiện Tại', desc: 'Số tiền thực tế hiện tại theo nguyên tệ' },
+        { name: 'G: Thành Tiền Quy Đổi VND', desc: 'Quy đổi về VND theo tỷ giá thị trường' },
+        { name: 'H: Ngưỡng Tối Thiểu (Min)', desc: 'Ngưỡng an toàn tối thiểu' },
+        { name: 'I: Tình Trạng Cảnh Báo', desc: '🟢 AN TOÀN hoặc 🔴 THIẾU HỤT - DƯỚI NGƯỠNG' },
+        { name: 'J: Số Tài Khoản / Ngân Hàng', desc: 'Số tài khoản hoặc tên ngân hàng quản lý' }
       ]
     },
     {
       id: 'sheet_sogiaodich',
-      name: '2. Sheet SổGiaoDịch (Chi Tiết Từng Hạng Mục & Tỷ Giá Nhập Tay)',
-      desc: 'Nhật ký giao dịch dòng tiền. Tỷ giá quy đổi cho phép nhập tay để chỉnh sửa các giao dịch cũ. Có cột tự động cảnh báo giao dịch chi lớn bất thường.',
+      name: '2. Tab "Sổ Giao Dịch" (Sổ Cái Dòng Tiền Đa Tệ & Phân Bổ Chi Tiết)',
+      desc: 'Toàn bộ các bút toán Thu, Chi, Chuyển quỹ, Chi trả cổ tức được ghi nhận tức thì theo thời gian thực.',
       columns: [
-        { name: 'A: Mã Giao Dịch', desc: 'Mã duy nhất TX-...' },
-        { name: 'B: Ngày (Date)', desc: 'YYYY-MM-DD' },
-        { name: 'C: Loại', desc: 'Thu / Chi / Chuyển quỹ' },
-        { name: 'D: Hạng Mục Chi Tiết', desc: 'Doanh thu CS1, Ads TikTok, Tiền nhà CS2...' },
-        { name: 'E: Nhóm Chi Phí', desc: 'revenue, marketing_ads, operating_cost, cogs...' },
-        { name: 'F: Quỹ Tiền / Tài Khoản', desc: 'Techcombank, Két tiền mặt, Chase USD...' },
-        { name: 'G: Số Tiền Gốc', desc: 'Số tiền thực tế giao dịch' },
-        { name: 'H: Loại Tiền', desc: 'VND / USD / AED / USDT' },
-        { name: 'I: Tỷ Giá Quy Đổi', desc: 'Tỷ giá thực tế tại thời điểm GD (Có thể nhập tay tự do)' },
-        { name: 'J: Thành Tiền VND', desc: 'Quy đổi ra VND' },
-        { name: 'K: Diễn Giải', desc: 'Nội dung chi tiết giao dịch' },
-        { name: 'L: Đối Tác / Cơ Sở', desc: 'Tên đối tác hoặc cơ sở phát sinh' },
-        { name: 'M: Mã Tham Chiếu', desc: 'Số hoá đơn / Mã UNC' },
-        { name: 'N: Thời Gian Tạo', desc: 'Timestamp hệ thống' }
-      ],
-      formulas: [
-        {
-          title: 'Công thức tính Thành Tiền VND với tỷ giá nhập tay:',
-          code: `=ROUND(G2 * I2, 0)`
-        }
+        { name: 'A: Mã Giao Dịch', desc: 'Mã định danh duy nhất TX-...' },
+        { name: 'B: Ngày (Date)', desc: 'Ngày hạch toán YYYY-MM-DD' },
+        { name: 'C: Loại', desc: 'Thu (+) / Chi (-) / Chuyển quỹ (⇄) / Cổ tức (-)' },
+        { name: 'D: Hạng Mục Chi Tiết', desc: 'Doanh thu CS1, Ads TikTok, Tiền thuê mặt bằng, Lương nhân viên...' },
+        { name: 'E: Nhóm Chi Phí', desc: 'Doanh thu / Ads / Vận hành / Giá vốn / Tài chính / Cổ tức' },
+        { name: 'F: Quỹ Nguồn', desc: 'Tên quỹ tiền mặt, ngân hàng hoặc ví thực hiện giao dịch' },
+        { name: 'G: Số Tiền Gốc', desc: 'Số tiền nguyên tệ giao dịch' },
+        { name: 'H: Loại Tiền', desc: 'VND / USDT / USD / AED' },
+        { name: 'I: Tỷ Giá Quy Đổi', desc: 'Tỷ giá hạch toán thực tế' },
+        { name: 'J: Thành Tiền VND', desc: 'Số tiền quy đổi VND' },
+        { name: 'K: Diễn Giải / Nội Dung', desc: 'Nội dung chi tiết giao dịch' },
+        { name: 'L: Đối Tác / Cơ Sở', desc: 'Cơ sở chi nhánh hoặc đối tác' },
+        { name: 'M: Mã Tham Chiếu', desc: 'Mã hóa đơn / Mã chuyển khoản' },
+        { name: 'N: Thời Gian Tạo', desc: 'Thời gian khởi tạo hệ thống' }
       ]
     }
   ];
@@ -330,24 +398,24 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-bold text-white tracking-tight">
-                  Tự Động Lưu Dòng Tiền Vào Google Sheets
+                  Tự Động Lưu & Đồng Bộ Dòng Tiền Vào Google Sheets
                 </h2>
                 <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
                   <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                  Đã Lưu Cloud Vĩnh Viễn
+                  Đồng Bộ Đám Mây Vĩnh Viễn
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Link Google Sheet được lưu đồng bộ trên Cloud Database, không bao giờ bị mất khi refresh hay cập nhật code.
+                Dán link Google Sheet của bạn để hệ thống tự động đẩy toàn bộ giao dịch và số dư quỹ sang Google Sheets ngay lập tức.
               </p>
             </div>
           </div>
 
-          {/* Nút Đăng nhập Google theo chuẩn Brand */}
+          {/* Nút Đăng nhập Google */}
           <div className="shrink-0">
             {!currentUser ? (
               <button
-                onClick={handleLoginGoogle}
+                onClick={() => handleLoginGoogle()}
                 disabled={isSigningIn}
                 className="inline-flex items-center gap-2.5 px-4 py-2.5 bg-white hover:bg-slate-100 text-slate-900 font-semibold text-xs rounded-xl shadow transition-all cursor-pointer disabled:opacity-50"
               >
@@ -371,7 +439,7 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
                 </div>
                 <button
                   onClick={handleLogoutGoogle}
-                  className="px-2.5 py-1 text-[11px] text-slate-400 hover:text-white bg-slate-800 rounded-lg hover:bg-slate-700"
+                  className="px-2.5 py-1 text-[11px] text-slate-400 hover:text-white bg-slate-800 rounded-lg hover:bg-slate-700 cursor-pointer"
                 >
                   Đổi tài khoản
                 </button>
@@ -384,14 +452,18 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
         <div className="mt-4 pt-2">
           {syncMessage && (
             <div
-              className={`p-3 rounded-xl mb-4 text-xs flex items-center gap-2 ${
+              className={`p-3.5 rounded-xl mb-4 text-xs flex items-start gap-2.5 ${
                 syncMessage.type === 'success'
                   ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30'
                   : 'bg-rose-500/10 text-rose-300 border border-rose-500/30'
               }`}
             >
-              {syncMessage.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
-              <span>{syncMessage.text}</span>
+              {syncMessage.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400 mt-0.5" />
+              ) : (
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+              )}
+              <div className="flex-1 leading-relaxed whitespace-pre-line">{syncMessage.text}</div>
             </div>
           )}
 
@@ -420,16 +492,27 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
                 {syncConfig.spreadsheetId ? (
                   <>
                     ID: <code className="text-slate-300 font-mono bg-slate-900 px-1.5 py-0.5 rounded">{syncConfig.spreadsheetId}</code>
-                    {syncConfig.lastSyncedAt && <> · Cập nhật: <strong className="text-slate-300">{syncConfig.lastSyncedAt}</strong></>}
+                    {syncConfig.lastSyncedAt && <> · Cập nhật gần nhất: <strong className="text-emerald-400">{syncConfig.lastSyncedAt}</strong></>}
                   </>
                 ) : (
-                  <>Dán link trang tính có sẵn ở bên dưới hoặc bấm nút Tạo trang tính mới.</>
+                  <>Dán link Google Sheet của bạn vào ô bên dưới hoặc bấm nút Tạo Sheet Mới để bắt đầu.</>
                 )}
               </div>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
-              {syncConfig.spreadsheetId ? (
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {onNavigateToSyncLogs && (
+                <button
+                  onClick={onNavigateToSyncLogs}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs rounded-lg border border-slate-700 transition-colors cursor-pointer"
+                  title="Xem nhật ký chi tiết các lần đồng bộ thành công hoặc thất bại"
+                >
+                  <Activity className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Xem Nhật Ký Đồng Bộ</span>
+                </button>
+              )}
+
+              {syncConfig.spreadsheetId && (
                 <>
                   <button
                     onClick={handleManualSyncNow}
@@ -437,7 +520,7 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
                     className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium text-xs rounded-lg border border-slate-700 transition-colors cursor-pointer disabled:opacity-50"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                    <span>{isSyncing ? 'Đang cập nhật...' : 'Đồng bộ lại toàn bộ'}</span>
+                    <span>{isSyncing ? 'Đang ghi vào Sheet...' : 'Đồng bộ lại toàn bộ'}</span>
                   </button>
                   {syncConfig.spreadsheetUrl && (
                     <a
@@ -451,31 +534,31 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
                     </a>
                   )}
                 </>
-              ) : (
-                <button
-                  onClick={handleCreateNewSheet}
-                  disabled={isSyncing || !currentUser}
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  <span>{isSyncing ? 'Đang tạo...' : 'Tạo Sheet Mới Tự Động'}</span>
-                </button>
               )}
+
+              <button
+                onClick={handleCreateNewSheet}
+                disabled={isSyncing}
+                className="inline-flex items-center gap-2 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-lg shadow transition-all cursor-pointer disabled:opacity-50"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>{isSyncing ? 'Đang tạo...' : '+ Tạo Sheet Mới Tự Động'}</span>
+              </button>
             </div>
           </div>
 
-          {/* KHỐI DÁN LINK HOẶC ĐỔI LINK GOOGLE SHEET (LƯU VĨNH VIỄN) */}
-          <div className="mt-3 bg-slate-950/40 border border-slate-800/80 rounded-xl p-3.5">
+          {/* KHỐI DÁN LINK HOẶC ĐỔI LINK GOOGLE SHEET (LƯU VĨNH VIỄN & ĐỒNG BỘ NGAY) */}
+          <div className="mt-3 bg-slate-950/60 border border-slate-800/90 rounded-xl p-4">
             <div className="flex items-center gap-2 mb-2 text-xs font-semibold text-slate-300">
               <Link className="w-4 h-4 text-emerald-400" />
-              <span>Dán Link Google Sheet Của Bạn (Lưu vĩnh viễn không mất):</span>
+              <span>Dán Link Google Sheet Của Bạn Để Đồng Bộ Trực Tiếp:</span>
             </div>
             <div className="flex flex-col sm:flex-row items-center gap-2">
               <input
                 type="text"
                 value={customSheetInput}
                 onChange={e => setCustomSheetInput(e.target.value)}
-                placeholder="Dán link Google Sheet (VD: https://docs.google.com/spreadsheets/d/...)"
+                placeholder="Dán link Google Sheet (VD: https://docs.google.com/spreadsheets/d/.../edit)"
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
               />
               <button
@@ -483,13 +566,14 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
                 disabled={isLinkingCustomSheet || !customSheetInput.trim()}
                 className="w-full sm:w-auto shrink-0 inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg transition-all disabled:opacity-40 cursor-pointer shadow-sm"
               >
-                <span>{isLinkingCustomSheet ? 'Đang kết nối...' : 'Lưu Link Này'}</span>
+                <span>{isLinkingCustomSheet ? 'Đang ghi vào Sheet...' : 'Lưu Link & Đồng Bộ Ngay'}</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </div>
-            <p className="text-[11px] text-slate-500 mt-1.5">
-              💡 Bạn có thể dán bất kỳ link Google Sheet nào của công ty. Hệ thống sẽ lưu ID này lên Database Cloud, tự động ghi nhận mọi giao dịch và mở lại bất cứ lúc nào.
-            </p>
+            <div className="text-[11px] text-slate-400 mt-2 space-y-1">
+              <p>💡 <strong>Cơ chế tự động:</strong> Khi bấm &quot;Lưu Link & Đồng Bộ Ngay&quot;, hệ thống sẽ tự động kết nối tài khoản Google của bạn, tự động tạo 2 tab <code>Sổ Giao Dịch</code> và <code>Danh Mục Quỹ & Số Dư</code> trên file Sheet đó và nạp toàn bộ {transactions.length} giao dịch sang.</p>
+              <p>⚠️ <strong>Lưu ý:</strong> Hãy chắc chắn tài khoản Google bạn đăng nhập có quyền <strong>Chỉnh sửa (Editor)</strong> đối với file Google Sheet đó.</p>
+            </div>
           </div>
         </div>
       </div>
@@ -499,15 +583,15 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
           <div>
             <h3 className="text-sm font-bold text-white">
-              Cấu Trúc Các Sheet & Công Thức Tự Tính (Tham Khảo)
+              Cấu Trúc Các Tab & Dữ Liệu Tự Động Trong Google Sheet
             </h3>
             <p className="text-xs text-slate-400">
-              Bạn có thể copy các công thức SUMIFS để dán vào Google Sheet nếu muốn tự làm thêm các báo cáo riêng.
+              Bảng tính Google Sheet được đồng bộ chuẩn 2 tab quản trị dòng tiền doanh nghiệp chuyên nghiệp.
             </p>
           </div>
           <button
             onClick={() => exportTransactionsToCSV(transactions)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-300 bg-slate-950 hover:bg-slate-800 rounded-lg border border-slate-800 transition-colors shrink-0"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-300 bg-slate-950 hover:bg-slate-800 rounded-lg border border-slate-800 transition-colors shrink-0 cursor-pointer"
           >
             <Download className="w-3.5 h-3.5 text-slate-400" />
             <span>Tải File CSV Về Máy</span>
@@ -518,53 +602,20 @@ export const GoogleSheetsGuideView: React.FC<GoogleSheetsGuideViewProps> = ({
           {sheetsStructure.map(sheet => (
             <div key={sheet.id} className="bg-slate-950/80 rounded-xl border border-slate-800/80 overflow-hidden">
               <div className="p-3.5 bg-slate-900/80 border-b border-slate-800 flex items-center justify-between">
-                <div>
-                  <h4 className="text-xs font-bold text-slate-200">{sheet.name}</h4>
-                  <p className="text-[11px] text-slate-400 mt-0.5">{sheet.desc}</p>
-                </div>
+                <span className="text-xs font-bold text-slate-200">{sheet.name}</span>
+                <span className="text-[11px] text-slate-400">{sheet.columns.length} cột dữ liệu</span>
               </div>
-
-              {/* Columns Grid */}
-              <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                {sheet.columns.map((col, idx) => (
-                  <div key={idx} className="bg-slate-900/50 p-2.5 rounded-lg border border-slate-800/60">
-                    <span className="font-mono text-emerald-400 text-xs font-semibold block">{col.name}</span>
-                    <span className="text-[11px] text-slate-400 mt-0.5 block leading-relaxed">{col.desc}</span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Formulas */}
-              {sheet.formulas && (
-                <div className="px-4 pb-4 space-y-3">
-                  {sheet.formulas.map((f, fIdx) => (
-                    <div key={fIdx} className="bg-slate-900/90 rounded-lg p-3 border border-slate-800">
-                      <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-[11px] font-semibold text-slate-300">{f.title}</span>
-                        <button
-                          onClick={() => handleCopy(f.code, `${sheet.id}_${fIdx}`)}
-                          className="inline-flex items-center gap-1 text-[10px] text-emerald-400 hover:text-emerald-300 font-mono px-2 py-0.5 bg-slate-800 rounded"
-                        >
-                          {copiedKey === `${sheet.id}_${fIdx}` ? (
-                            <>
-                              <Check className="w-3 h-3 text-emerald-400" />
-                              <span>Đã sao chép</span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3 h-3" />
-                              <span>Copy công thức</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                      <code className="text-xs text-emerald-300/90 font-mono block bg-slate-950 p-2 rounded border border-slate-800/80 overflow-x-auto whitespace-pre">
-                        {f.code}
-                      </code>
+              <div className="p-4 space-y-3">
+                <p className="text-xs text-slate-400">{sheet.desc}</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                  {sheet.columns.map((col, idx) => (
+                    <div key={idx} className="bg-slate-900/60 p-2 rounded-lg border border-slate-800/60">
+                      <span className="font-semibold text-emerald-400 block">{col.name}</span>
+                      <span className="text-[11px] text-slate-400 block mt-0.5">{col.desc}</span>
                     </div>
                   ))}
                 </div>
-              )}
+              </div>
             </div>
           ))}
         </div>

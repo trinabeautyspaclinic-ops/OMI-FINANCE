@@ -18,7 +18,11 @@ import {
   TimeFilterPeriod, 
   Transaction 
 } from './types/cashflow';
-import { calculateAccountBalances, filterTransactionsByPeriod } from './utils/cashflowCalculations';
+import { 
+  calculateAccountBalances, 
+  filterTransactionsByPeriod, 
+  ensureCoreAccounts 
+} from './utils/cashflowCalculations';
 import { DEFAULT_ALERT_CONFIG, detectActiveAlerts } from './utils/alertUtils';
 import { Header } from './components/Header';
 import { SummaryCards } from './components/SummaryCards';
@@ -27,15 +31,25 @@ import { FundManagerView } from './components/FundManagerView';
 import { AlertCenterView } from './components/AlertCenterView';
 import { DividendView } from './components/DividendView';
 import { GoogleSheetsGuideView } from './components/GoogleSheetsGuideView';
+import { SyncLogsView } from './components/SyncLogsView';
 import { CategoryManagerView } from './components/CategoryManagerView';
 import { CashflowAllocationView } from './components/CashflowAllocationView';
 import { TransactionModal } from './components/TransactionModal';
 import { TransferFundModal } from './components/TransferFundModal';
 import { ShareholderModal } from './components/ShareholderModal';
-import { RotateCcw } from 'lucide-react';
-import { testFirebaseConnection, getAccessToken } from './services/firebase';
-import { getLocalSheetsConfig, saveLocalSheetsConfig, syncSingleTransactionToSheet, GoogleSheetsSyncConfig } from './services/googleSheetsSync';
+import { RecoveryModal } from './components/RecoveryModal';
+import { RotateCcw, History, AlertTriangle, CheckCircle2, X } from 'lucide-react';
+import { testFirebaseConnection, getAccessToken, googleSignIn, clearAccessToken } from './services/firebase';
+import { 
+  getLocalSheetsConfig, 
+  saveLocalSheetsConfig, 
+  syncSingleTransactionToSheet, 
+  syncAllTransactionsToSheet,
+  syncAccountsToSheet,
+  GoogleSheetsSyncConfig 
+} from './services/googleSheetsSync';
 import { SEED_USDT_TRANSACTIONS } from './data/seedUsdtData';
+import { scanLocalBackups, saveAutoBackup, archiveTransactionsBeforeReset } from './utils/recoveryUtils';
 import { 
   subscribeToTransactions, 
   subscribeToAccounts, 
@@ -54,12 +68,20 @@ import {
 
 export default function App() {
   // Navigation State
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'funds' | 'allocation' | 'categories' | 'alerts' | 'dividends' | 'sheets_guide'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'funds' | 'allocation' | 'categories' | 'alerts' | 'dividends' | 'sheets_guide' | 'sync_logs'>('dashboard');
 
   // Persistence State
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
-    const saved = localStorage.getItem('omniflow_transactions_v3');
-    return saved ? JSON.parse(saved) : INITIAL_TRANSACTIONS;
+    try {
+      const saved = localStorage.getItem('omniflow_transactions_v3');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.warn('Lỗi đọc giao dịch từ localStorage:', e);
+    }
+    return INITIAL_TRANSACTIONS;
   });
 
   const [accounts, setAccounts] = useState<AccountWallet[]>(() => {
@@ -67,12 +89,18 @@ export default function App() {
       const saved = localStorage.getItem('omniflow_accounts_v3');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const ensured = ensureCoreAccounts(parsed);
+          localStorage.setItem('omniflow_accounts_v3', JSON.stringify(ensured));
+          return ensured;
+        }
       }
     } catch (e) {
       console.warn('Error reading accounts from localStorage', e);
     }
-    return INITIAL_ACCOUNTS;
+    const initialEnsured = ensureCoreAccounts(INITIAL_ACCOUNTS);
+    localStorage.setItem('omniflow_accounts_v3', JSON.stringify(initialEnsured));
+    return initialEnsured;
   });
 
   const [categories, setCategories] = useState<Category[]>(() => {
@@ -123,6 +151,7 @@ export default function App() {
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [isShareholderModalOpen, setIsShareholderModalOpen] = useState(false);
+  const [isRecoveryModalOpen, setIsRecoveryModalOpen] = useState(false);
 
   // 1. Initial Test Connection on boot
   useEffect(() => {
@@ -179,18 +208,15 @@ export default function App() {
           saveAccountsBulkToCloud(missingFromCloud).catch(console.warn);
         }
 
-        setAccounts(merged);
-        localStorage.setItem('omniflow_accounts_v3', JSON.stringify(merged));
+        const ensured = ensureCoreAccounts(merged);
+        setAccounts(ensured);
+        localStorage.setItem('omniflow_accounts_v3', JSON.stringify(ensured));
       } else {
-        // If cloud snapshot is empty or offline, preserve local accounts!
-        if (localAccounts.length > 0) {
-          setAccounts(localAccounts);
-          saveAccountsBulkToCloud(localAccounts).catch(console.warn);
-        } else {
-          setAccounts(INITIAL_ACCOUNTS);
-          localStorage.setItem('omniflow_accounts_v3', JSON.stringify(INITIAL_ACCOUNTS));
-          saveAccountsBulkToCloud(INITIAL_ACCOUNTS).catch(console.warn);
-        }
+        // If cloud snapshot is empty or offline, preserve local accounts and ensure core accounts!
+        const base = localAccounts.length > 0 ? localAccounts : INITIAL_ACCOUNTS;
+        const ensured = ensureCoreAccounts(base);
+        setAccounts(ensured);
+        localStorage.setItem('omniflow_accounts_v3', JSON.stringify(ensured));
       }
     });
 
@@ -264,38 +290,165 @@ export default function App() {
   const balances = calculateAccountBalances(accounts, transactions, rates);
   const activeAlerts = detectActiveAlerts(accounts, balances, transactions, alertConfig);
 
-  // Handlers with instant Cloud persistence
-  const handleSaveTransaction = async (savedTx: Transaction) => {
-    // Optimistic UI update
-    setTransactions(prev => {
-      const exists = prev.some(t => t.id === savedTx.id);
-      if (exists) {
-        return prev.map(t => (t.id === savedTx.id ? savedTx : t));
-      }
-      return [savedTx, ...prev];
-    });
-    setEditingTransaction(null);
+  // Tự động sao lưu an toàn vào bộ nhớ khi có giao dịch
+  useEffect(() => {
+    if (transactions && transactions.length > 0) {
+      saveAutoBackup(transactions);
+    }
+  }, [transactions]);
 
-    // Save to Cloud Firestore
-    try {
-      await saveTransactionToCloud(savedTx);
-    } catch (err) {
-      console.error('Lỗi lưu giao dịch lên đám mây:', err);
+  // Handler khôi phục lịch sử giao dịch
+  const handleRestoreTransactions = async (newTxs: Transaction[], mode: 'merge' | 'replace') => {
+    let merged: Transaction[] = [];
+    if (mode === 'replace') {
+      merged = newTxs;
+    } else {
+      const existingIds = new Set(transactions.map(t => t.id));
+      const toAdd = newTxs.filter(t => !existingIds.has(t.id));
+      merged = [...toAdd, ...transactions];
     }
 
-    // Auto-save to Google Sheets if connected and enabled
+    setTransactions(merged);
+    localStorage.setItem('omniflow_transactions_v3', JSON.stringify(merged));
+    saveAutoBackup(merged);
+    saveTransactionsBulkToCloud(merged).catch(console.warn);
+
+    // Nếu chứa các giao dịch USDT seed, điều chỉnh initialBalance để bảo toàn đúng 62.718,22 USDT
+    const hasSeedUsdt = merged.some(t => t.id.startsWith('tx_usdt_'));
+    let currentAccounts = accounts;
+    if (hasSeedUsdt) {
+      currentAccounts = accounts.map(a => 
+        (a.id === 'acc_binance_usdt' || (a.currency === 'USDT' && a.category === 'wallet_usdt')) 
+          ? { ...a, initialBalance: 45332 } 
+          : a
+      );
+      setAccounts(currentAccounts);
+      localStorage.setItem('omniflow_accounts_v3', JSON.stringify(currentAccounts));
+      saveAccountsBulkToCloud(currentAccounts).catch(console.warn);
+    }
+
+    // Đồng bộ sang Google Sheets nếu đã liên kết
     try {
-      const sheetsCfg = getLocalSheetsConfig();
+      const sheetsCfg = cloudSheetsConfig?.spreadsheetId ? cloudSheetsConfig : getLocalSheetsConfig();
       if (sheetsCfg.spreadsheetId && sheetsCfg.autoSyncEnabled) {
         const token = await getAccessToken();
         if (token) {
-          syncSingleTransactionToSheet(token, sheetsCfg.spreadsheetId, savedTx).catch(sheetErr => {
-            console.warn('[Google Sheets Auto-Save] Không thể đồng bộ giao dịch:', sheetErr);
-          });
+          await syncAllTransactionsToSheet(token, sheetsCfg.spreadsheetId, merged);
+          await syncAccountsToSheet(token, sheetsCfg.spreadsheetId, currentAccounts, merged, rates);
         }
       }
     } catch (e) {
-      // ignore
+      console.warn('Lỗi đồng bộ Google Sheets khi khôi phục:', e);
+    }
+  };
+
+  // Google Sheets feedback toast notification state
+  const [syncToast, setSyncToast] = useState<{
+    type: 'success' | 'warning' | 'error';
+    message: string;
+    actionLabel?: string;
+    onAction?: () => void;
+  } | null>(null);
+
+  const handleReauthAndSync = async (savedTx: Transaction) => {
+    try {
+      setSyncToast({
+        type: 'warning',
+        message: 'Đang mở cửa sổ đăng nhập Google để kết nối và đồng bộ...'
+      });
+      const loginRes = await googleSignIn();
+      if (loginRes?.accessToken) {
+        const sheetsCfg = cloudSheetsConfig?.spreadsheetId ? cloudSheetsConfig : getLocalSheetsConfig();
+        if (sheetsCfg.spreadsheetId) {
+          await syncSingleTransactionToSheet(loginRes.accessToken, sheetsCfg.spreadsheetId, savedTx);
+          syncAccountsToSheet(loginRes.accessToken, sheetsCfg.spreadsheetId, accounts, transactions, rates).catch(console.warn);
+          setSyncToast({
+            type: 'success',
+            message: '✅ ĐÃ LƯU VÀO GOOGLE SHEET THÀNH CÔNG! Giao dịch và số dư các quỹ đã được ghi nhận trên Google Sheet.'
+          });
+        }
+      }
+    } catch (err: any) {
+      setSyncToast({
+        type: 'error',
+        message: `Lỗi kết nối Google: ${err.message || 'Không thể đăng nhập'}`
+      });
+    }
+  };
+
+  // Handlers with instant Cloud & Google Sheets persistence
+  const handleSaveTransaction = async (savedTx: Transaction) => {
+    // 1. Optimistic UI update + Synchronous LocalStorage & AutoBackup persistence
+    let nextTxs: Transaction[] = [];
+    setTransactions(prev => {
+      const exists = prev.some(t => t.id === savedTx.id);
+      if (exists) {
+        nextTxs = prev.map(t => (t.id === savedTx.id ? savedTx : t));
+      } else {
+        nextTxs = [savedTx, ...prev];
+      }
+      localStorage.setItem('omniflow_transactions_v3', JSON.stringify(nextTxs));
+      saveAutoBackup(nextTxs);
+      return nextTxs;
+    });
+    setEditingTransaction(null);
+
+    // 2. Save to Cloud Firestore
+    try {
+      await saveTransactionToCloud(savedTx);
+    } catch (err) {
+      console.warn('Lỗi lưu giao dịch lên đám mây:', err);
+    }
+
+    // 3. Auto-save to Google Sheets with real-time feedback and account balance sync
+    const sheetsCfg = cloudSheetsConfig?.spreadsheetId ? cloudSheetsConfig : getLocalSheetsConfig();
+    if (sheetsCfg.spreadsheetId && sheetsCfg.autoSyncEnabled) {
+      let token = await getAccessToken();
+      if (!token) {
+        setSyncToast({
+          type: 'warning',
+          message: '⚠️ Giao dịch đã lưu vào OmniFlow, nhưng CHƯA thể lưu vào link Google Sheet do bạn chưa đăng nhập Google hoặc phiên đã hết hạn.',
+          actionLabel: 'Đăng nhập Google & Lưu vào Sheet ngay',
+          onAction: () => handleReauthAndSync(savedTx)
+        });
+      } else {
+        try {
+          await syncSingleTransactionToSheet(token, sheetsCfg.spreadsheetId, savedTx);
+          // Đồng thời cập nhật số dư hiện tại của các quỹ (bao gồm Ví USDT & Bank VND) vào Google Sheet
+          syncAccountsToSheet(token, sheetsCfg.spreadsheetId, accounts, nextTxs, rates).catch(console.warn);
+          setSyncToast({
+            type: 'success',
+            message: `✅ ĐÃ LƯU VÀO GOOGLE SHEET THÀNH CÔNG! Giao dịch "${savedTx.description || savedTx.categoryName}" và số dư các quỹ đã được đồng bộ.`
+          });
+        } catch (sheetErr: any) {
+          console.warn('[Google Sheets Auto-Save] Không thể đồng bộ giao dịch:', sheetErr);
+          const msg = String(sheetErr?.message || '');
+          if (msg.includes('401') || msg.includes('auth') || msg.includes('token') || msg.includes('hết hạn')) {
+            clearAccessToken();
+            setSyncToast({
+              type: 'warning',
+              message: '⚠️ Phiên đăng nhập Google đã hết hạn nên chưa ghi được vào Google Sheet.',
+              actionLabel: 'Đăng nhập lại & Lưu vào Sheet',
+              onAction: () => handleReauthAndSync(savedTx)
+            });
+          } else if (msg.includes('403')) {
+            setSyncToast({
+              type: 'error',
+              message: '⚠️ Google Sheet bị từ chối quyền (403). Hãy mở file Sheet > Bấm nút Chia sẻ (Share) và cấp quyền Người chỉnh sửa (Editor) cho tài khoản Google của bạn.'
+            });
+          } else {
+            setSyncToast({
+              type: 'error',
+              message: `⚠️ Lỗi lưu Google Sheet: ${sheetErr.message || 'Không thể ghi dữ liệu'}`
+            });
+          }
+        }
+      }
+    } else {
+      setSyncToast({
+        type: 'success',
+        message: '✅ Đã lưu giao dịch vào sổ cái OmniFlow thành công!'
+      });
     }
   };
 
@@ -310,12 +463,30 @@ export default function App() {
   };
 
   const handleDeleteTransaction = async (id: string) => {
-    setTransactions(prev => prev.filter(t => t.id !== id));
+    let nextTxs: Transaction[] = [];
+    setTransactions(prev => {
+      nextTxs = prev.filter(t => t.id !== id);
+      localStorage.setItem('omniflow_transactions_v3', JSON.stringify(nextTxs));
+      saveAutoBackup(nextTxs);
+      return nextTxs;
+    });
     try {
       await deleteTransactionFromCloud(id);
     } catch (err) {
-      console.error('Lỗi xóa giao dịch trên đám mây:', err);
+      console.warn('Lỗi xóa giao dịch trên đám mây:', err);
     }
+
+    // Nếu có liên kết Google Sheets và bật tự động, đồng bộ lại danh sách giao dịch và số dư quỹ
+    try {
+      const sheetsCfg = cloudSheetsConfig?.spreadsheetId ? cloudSheetsConfig : getLocalSheetsConfig();
+      if (sheetsCfg.spreadsheetId && sheetsCfg.autoSyncEnabled) {
+        const token = await getAccessToken();
+        if (token) {
+          syncAllTransactionsToSheet(token, sheetsCfg.spreadsheetId, nextTxs).catch(console.warn);
+          syncAccountsToSheet(token, sheetsCfg.spreadsheetId, accounts, nextTxs, rates).catch(console.warn);
+        }
+      }
+    } catch (e) {}
   };
 
   const handleUpdateAccountThreshold = async (accountId: string, newThreshold: number) => {
@@ -495,8 +666,23 @@ export default function App() {
       return;
     }
     const oldTx = [...transactions];
+    archiveTransactionsBeforeReset(oldTx, 'Xóa toàn bộ giao dịch cũ');
     setTransactions([]);
     localStorage.setItem('omniflow_transactions_v3', JSON.stringify([]));
+
+    // Đảm bảo số dư ban đầu được thiết lập đầy đủ về quỹ thực tế 62.718,22 USDT và 140.477.765 đ
+    const updatedAccs = accounts.map(acc => {
+      if (acc.id === 'acc_binance_usdt' || (acc.currency === 'USDT' && acc.category === 'wallet_usdt')) {
+        return { ...acc, initialBalance: 62718.22 };
+      }
+      if (acc.id === 'acc_techcom' || (acc.currency === 'VND' && acc.category === 'bank_vn')) {
+        return { ...acc, initialBalance: 140477765 };
+      }
+      return acc;
+    });
+    setAccounts(updatedAccs);
+    localStorage.setItem('omniflow_accounts_v3', JSON.stringify(updatedAccs));
+
     try {
       await clearAllTransactionsFromCloud(oldTx);
     } catch (e) {
@@ -512,15 +698,16 @@ export default function App() {
       '• Tài khoản Ngân hàng (Bank VND): 140.477.765 đ\n' +
       '• Ví USDT: 62.718,22 USDT\n' +
       '• Quỹ Tiền Mặt Tại Két: 0 đ\n' +
-      '• Các giao dịch cũ sẽ được dọn sạch để bắt đầu từ số dư quỹ này.\n\n' +
+      '• Các giao dịch cũ sẽ được dọn sạch để bắt đầu từ số dư quỹ này (Dữ liệu cũ sẽ được lưu tự động vào bản sao lưu để có thể khôi phục bất cứ lúc nào).\n\n' +
       '★ BẢO ĐẢM: Toàn bộ danh mục Hạng mục thu/chi bạn đã sửa, danh sách cổ đông và tỷ giá sẽ được GIỮ NGUYÊN VẸN 100%.';
 
     if (!window.confirm(confirmMessage)) {
       return;
     }
 
-    // 1. Dọn dẹp giao dịch cũ để bắt đầu sổ cái mới từ mốc số dư thực tế
+    // 1. Tự động lưu trữ an toàn trước khi dọn dẹp để bảo vệ 100% lịch sử cho người dùng
     const oldTx = [...transactions];
+    archiveTransactionsBeforeReset(oldTx, 'Khởi tạo Quỹ Thực Tế');
     setTransactions([]);
     localStorage.setItem('omniflow_transactions_v3', JSON.stringify([]));
     try {
@@ -576,6 +763,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         onOpenNewTransaction={handleOpenNewTransaction}
         onOpenTransferModal={() => setIsTransferModalOpen(true)}
+        onOpenRecoveryModal={() => setIsRecoveryModalOpen(true)}
         transactions={transactions}
         alertCount={activeAlerts.length}
       />
@@ -598,6 +786,7 @@ export default function App() {
               onOpenNewTransaction={handleOpenNewTransaction}
               onNavigateToFunds={() => setActiveTab('funds')}
               onNavigateToAllocation={() => setActiveTab('allocation')}
+              onOpenRecoveryModal={() => setIsRecoveryModalOpen(true)}
             />
 
             {/* Recent Transactions List */}
@@ -620,6 +809,7 @@ export default function App() {
                 onOpenNewTransaction={handleOpenNewTransaction}
                 onEditTransaction={handleEditTransaction}
                 onDeleteTransaction={handleDeleteTransaction}
+                onOpenRecoveryModal={() => setIsRecoveryModalOpen(true)}
               />
             </div>
           </div>
@@ -652,6 +842,7 @@ export default function App() {
             onDeleteTransaction={handleDeleteTransaction}
             onClearAllTransactions={handleClearAllOldTransactions}
             onLoadUsdtSheetData={handleImportUsdtSheet}
+            onOpenRecoveryModal={() => setIsRecoveryModalOpen(true)}
           />
         )}
 
@@ -705,8 +896,21 @@ export default function App() {
         {activeTab === 'sheets_guide' && (
           <GoogleSheetsGuideView 
             transactions={transactions} 
+            accounts={accounts}
+            rates={rates}
             cloudSheetsConfig={cloudSheetsConfig}
             onSaveCloudSheetsConfig={handleSaveCloudSheetsConfig}
+            onNavigateToSyncLogs={() => setActiveTab('sync_logs')}
+          />
+        )}
+
+        {activeTab === 'sync_logs' && (
+          <SyncLogsView
+            transactions={transactions}
+            accounts={accounts}
+            rates={rates}
+            cloudSheetsConfig={cloudSheetsConfig}
+            onNavigateToSheetsGuide={() => setActiveTab('sheets_guide')}
           />
         )}
       </main>
@@ -758,6 +962,53 @@ export default function App() {
         shareholders={shareholders}
         onUpdateShareholders={handleSaveShareholders}
       />
+
+      <RecoveryModal
+        isOpen={isRecoveryModalOpen}
+        onClose={() => setIsRecoveryModalOpen(false)}
+        currentTransactions={transactions}
+        onRestoreTransactions={handleRestoreTransactions}
+        accounts={accounts}
+        categories={categories}
+      />
+
+      {/* Realtime Google Sheets Sync Feedback Toast */}
+      {syncToast && (
+        <div className="fixed bottom-5 right-5 z-50 max-w-md w-full shadow-2xl animate-in slide-in-from-bottom-4 duration-200">
+          <div className={`p-4 rounded-2xl border flex items-start gap-3 ${
+            syncToast.type === 'success'
+              ? 'bg-slate-900 border-emerald-500/40 text-emerald-300'
+              : syncToast.type === 'warning'
+              ? 'bg-slate-900 border-amber-500/40 text-amber-300'
+              : 'bg-slate-900 border-rose-500/40 text-rose-300'
+          }`}>
+            {syncToast.type === 'success' ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+            ) : (
+              <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+            )}
+            <div className="flex-1 text-xs">
+              <div className="leading-relaxed font-medium">{syncToast.message}</div>
+              {syncToast.actionLabel && syncToast.onAction && (
+                <button
+                  onClick={() => {
+                    syncToast.onAction!();
+                  }}
+                  className="mt-2.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg transition-colors cursor-pointer text-xs flex items-center gap-1 shadow-sm"
+                >
+                  {syncToast.actionLabel}
+                </button>
+              )}
+            </div>
+            <button
+              onClick={() => setSyncToast(null)}
+              className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
